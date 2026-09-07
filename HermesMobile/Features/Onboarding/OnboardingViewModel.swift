@@ -40,10 +40,29 @@ final class OnboardingViewModel {
         savedHeaders: [CustomHeader] = [],
         initialErrorMessage: String? = nil
     ) {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        let developmentCraftURL = environment["HERMEX_CRAFT_SERVER_URL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let usesDevelopmentCraftDefaults = savedServer == nil && !(developmentCraftURL ?? "").isEmpty
+        serverKind = usesDevelopmentCraftDefaults ? .craft : savedServerKind
+        #else
+        let usesDevelopmentCraftDefaults = false
         serverKind = savedServerKind
+        #endif
+
         if let savedServer {
             serverURLString = savedServer.absoluteString
         }
+        #if DEBUG
+        if usesDevelopmentCraftDefaults {
+            serverURLString = developmentCraftURL ?? ""
+            // Development-only process environment. The token remains in memory
+            // until a successful handshake moves it to the scoped Keychain entry;
+            // it is never compiled into the app or persisted in UserDefaults.
+            password = environment["HERMEX_CRAFT_SERVER_TOKEN"] ?? ""
+        }
+        #endif
         customHeaders = savedHeaders
         errorMessage = initialErrorMessage
         if initialErrorMessage != nil {
