@@ -2252,6 +2252,7 @@ struct AddServerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var serverURLString = ""
+    @State private var serverKind: ServerKind = .hermes
     @State private var password = ""
     @State private var customHeaders: [CustomHeader] = []
     @State private var needsPassword = false
@@ -2268,31 +2269,41 @@ struct AddServerView: View {
     private var canSubmit: Bool { !trimmedURL.isEmpty && !isWorking }
 
     private var derivedHost: String {
-        (try? AuthManager.normalizedServerURL(from: serverURLString))?.host ?? ""
+        if serverKind == .craft {
+            return (try? CraftAuthenticationClient.normalizedServerURL(from: serverURLString))?.host ?? ""
+        }
+        return (try? AuthManager.normalizedServerURL(from: serverURLString))?.host ?? ""
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
+                    Picker("Server", selection: $serverKind) {
+                        ForEach(ServerKind.allCases, id: \.self) { kind in
+                            Text(verbatim: kind.displayName).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
                     SettingsCard(title: String(localized: "Server")) {
                         SettingsTextFieldRow(
                             title: String(localized: "URL"),
                             text: $serverURLString,
-                            placeholder: "100.64.0.1:8787",
+                            placeholder: serverKind == .craft ? "ws://127.0.0.1:9100" : "100.64.0.1:8787",
                             keyboardType: .URL,
                             autocapitalization: .never,
                             submitLabel: .go,
                             onSubmit: { Task { await submit() } }
                         )
 
-                        if needsPassword {
+                        if needsPassword || serverKind == .craft {
                             SettingsDivider()
 
                             SettingsTextFieldRow(
-                                title: String(localized: "Password"),
+                                title: serverKind == .craft ? "Server Token" : String(localized: "Password"),
                                 text: $password,
-                                placeholder: String(localized: "Server password"),
+                                placeholder: serverKind == .craft ? "Craft server token" : String(localized: "Server password"),
                                 autocapitalization: .never,
                                 isSecure: true,
                                 submitLabel: .go,
@@ -2301,8 +2312,10 @@ struct AddServerView: View {
                         }
                     }
 
-                    SettingsCard(title: String(localized: "Connection Headers")) {
-                        CustomHeadersEditor(headers: $customHeaders)
+                    if serverKind == .hermes {
+                        SettingsCard(title: String(localized: "Connection Headers")) {
+                            CustomHeadersEditor(headers: $customHeaders)
+                        }
                     }
 
                     SettingsCard(title: String(localized: "Identity")) {
@@ -2356,11 +2369,19 @@ struct AddServerView: View {
         guard canSubmit else { return }
         errorMessage = nil
         isWorking = true
-        let outcome = await authManager.addServer(
-            serverURLString: serverURLString,
-            password: password,
-            customHeaders: customHeaders
-        )
+        let outcome: AuthManager.AddServerOutcome
+        if serverKind == .craft {
+            outcome = await authManager.addCraftServer(
+                serverURLString: serverURLString,
+                token: password
+            )
+        } else {
+            outcome = await authManager.addServer(
+                serverURLString: serverURLString,
+                password: password,
+                customHeaders: customHeaders
+            )
+        }
         isWorking = false
 
         switch outcome {

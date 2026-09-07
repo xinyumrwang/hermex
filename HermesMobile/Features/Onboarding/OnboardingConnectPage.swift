@@ -25,12 +25,23 @@ struct OnboardingConnectPage: View {
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
+                Picker("Server", selection: $viewModel.serverKind) {
+                    ForEach(ServerKind.allCases, id: \.self) { kind in
+                        Text(verbatim: kind.displayName).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(viewModel.isConnectionLocked)
+                .accessibilityLabel("Server")
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Connect")
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.white)
 
-                    Text("Enter the exact HTTPS Tailscale Serve URL your agent returned, for example `https://server.tailnet-name.ts.net`.")
+                    Text(viewModel.serverKind == .craft
+                         ? "Connect directly to a Craft RPC server with its WebSocket URL and server token. Local development may use `ws://127.0.0.1:9100`."
+                         : "Enter the exact HTTPS Tailscale Serve URL your agent returned, for example `https://server.tailnet-name.ts.net`.")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
@@ -40,7 +51,9 @@ struct OnboardingConnectPage: View {
                     OnboardingField(systemImage: "link", title: String(localized: "Server URL")) {
                         ZStack(alignment: .leading) {
                             if viewModel.serverURLString.isEmpty {
-                                Text(verbatim: "https://server.tailnet-name.ts.net")
+                                Text(verbatim: viewModel.serverKind == .craft
+                                     ? "ws://127.0.0.1:9100"
+                                     : "https://server.tailnet-name.ts.net")
                                     .foregroundStyle(.white.opacity(0.38))
                                     .allowsHitTesting(false)
                             }
@@ -59,11 +72,14 @@ struct OnboardingConnectPage: View {
                     }
 
                     if viewModel.isPasswordRequired {
-                        OnboardingField(systemImage: "key.fill", title: String(localized: "Password")) {
+                        OnboardingField(
+                            systemImage: "key.fill",
+                            title: viewModel.serverKind == .craft ? "Server Token" : String(localized: "Password")
+                        ) {
                             SecureField(
                                 "",
                                 text: $viewModel.password,
-                                prompt: Text("Server password")
+                                prompt: Text(viewModel.serverKind == .craft ? "Craft server token" : "Server password")
                                     .foregroundStyle(.white.opacity(0.38))
                             )
                             .textContentType(.password)
@@ -75,16 +91,18 @@ struct OnboardingConnectPage: View {
                     }
                 }
 
-                DisclosureGroup(isExpanded: $isShowingAdvanced) {
-                    CustomHeadersEditor(headers: $viewModel.customHeaders, style: .onboarding)
-                        .disabled(viewModel.isConnectionLocked)
-                        .padding(.top, 10)
-                } label: {
-                    Label("Advanced", systemImage: "slider.horizontal.3")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
+                if viewModel.serverKind == .hermes {
+                    DisclosureGroup(isExpanded: $isShowingAdvanced) {
+                        CustomHeadersEditor(headers: $viewModel.customHeaders, style: .onboarding)
+                            .disabled(viewModel.isConnectionLocked)
+                            .padding(.top, 10)
+                    } label: {
+                        Label("Advanced", systemImage: "slider.horizontal.3")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    .tint(.white.opacity(0.6))
                 }
-                .tint(.white.opacity(0.6))
 
                 if viewModel.isWorking {
                     OnboardingStatusBanner(

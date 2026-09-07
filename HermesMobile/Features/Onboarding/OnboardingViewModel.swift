@@ -6,10 +6,17 @@ import Observation
 final class OnboardingViewModel {
     nonisolated static let emptyPasswordMessage = String(localized: "Enter the server password.")
 
+    var serverKind: ServerKind {
+        didSet { invalidateProbedAuthStatusIfNeeded() }
+    }
     var serverURLString = "" {
         didSet { invalidateProbedAuthStatusIfNeeded() }
     }
-    var password = ""
+    var password = "" {
+        didSet {
+            if serverKind == .craft { invalidateProbedAuthStatusIfNeeded() }
+        }
+    }
     var customHeaders: [CustomHeader] = [] {
         didSet { invalidateProbedAuthStatusIfNeeded() }
     }
@@ -29,9 +36,11 @@ final class OnboardingViewModel {
 
     init(
         savedServer: URL? = nil,
+        savedServerKind: ServerKind = .hermes,
         savedHeaders: [CustomHeader] = [],
         initialErrorMessage: String? = nil
     ) {
+        serverKind = savedServerKind
         if let savedServer {
             serverURLString = savedServer.absoluteString
         }
@@ -44,6 +53,7 @@ final class OnboardingViewModel {
     }
 
     var isPasswordRequired: Bool {
+        if serverKind == .craft { return true }
         // No auth → no password. Already signed in (trusted-header proxy) → no
         // password either. Passkey/OIDC-only → hide the field; connect()
         // surfaces the specific unsupported message instead. Unknown (nil)
@@ -77,20 +87,23 @@ final class OnboardingViewModel {
     private func currentConnectionIdentity() -> String {
         let urlPart: String
         do {
-            let url = try AuthManager.normalizedServerURL(from: serverURLString)
+            let url = serverKind == .craft
+                ? try CraftAuthenticationClient.normalizedServerURL(from: serverURLString)
+                : try AuthManager.normalizedServerURL(from: serverURLString)
             urlPart = url.absoluteString.lowercased()
         } catch {
             urlPart = serverURLString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
         // Escape delimiters so distinct header sets cannot collide, then sort
         // canonical keys for stable serialization.
-        let headerPart = effectiveHeaderMap()
+        let headerPart = (serverKind == .hermes ? effectiveHeaderMap() : [])
             .map { name, value -> String in
                 "\(Self.escapeForIdentity(name)):\(Self.escapeForIdentity(value))"
             }
             .sorted()
             .joined(separator: "|")
-        return "\(urlPart)|\(headerPart)"
+        let credentialPart = serverKind == .craft ? Self.escapeForIdentity(password) : ""
+        return "\(serverKind.rawValue)|\(urlPart)|\(headerPart)|\(credentialPart)"
     }
 
     nonisolated private static func escapeForIdentity(_ raw: String) -> String {
@@ -142,6 +155,18 @@ final class OnboardingViewModel {
         }
 
         do {
+            if serverKind == .craft {
+                _ = try await authManager.testCraftConnection(
+                    serverURLString: serverURLString,
+                    token: password
+                )
+                guard token == operationGeneration else { return }
+                guard identityAtStart == currentConnectionIdentity() else { return }
+                probedConnectionIdentity = identityAtStart
+                authStatus = nil
+                connectionMessage = String(localized: "Connection ok. Already signed in by this server.")
+                return
+            }
             let status = try await authManager.testConnection(
                 serverURLString: serverURLString,
                 customHeaders: customHeaders
@@ -175,7 +200,14 @@ final class OnboardingViewModel {
         errorMessage = nil
         connectionMessage = nil
 
-        if let validationMessage = Self.passwordValidationMessage(authStatus: authStatus, password: password) {
+        if serverKind == .craft,
+           password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            errorMessage = "Enter the Craft server token."
+            return
+        }
+
+        if serverKind == .hermes,
+           let validationMessage = Self.passwordValidationMessage(authStatus: authStatus, password: password) {
             errorMessage = validationMessage
             return
         }
@@ -192,6 +224,15 @@ final class OnboardingViewModel {
                 isWorking = false
                 isConnectionLocked = false
             }
+        }
+
+        if serverKind == .craft {
+            let configureIdentity = currentConnectionIdentity()
+            await authManager.configureCraft(serverURLString: serverURLString, token: password)
+            guard token == operationGeneration else { return }
+            guard configureIdentity == currentConnectionIdentity() else { return }
+            errorMessage = authManager.lastErrorMessage
+            return
         }
 
         if authStatus == nil {

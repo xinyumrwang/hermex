@@ -25,6 +25,9 @@ struct KeychainStore: KeychainStoring {
         // URL is treated as a credential, so the registry
         // lives in the Keychain, not UserDefaults (#15).
         case servers = "servers"
+        // Craft's pre-shared WebSocket authentication token, always scoped by
+        // the normalized Craft server URL.
+        case craftToken = "craft_token"
     }
 
     private let keychain: Keychain

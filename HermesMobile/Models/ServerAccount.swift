@@ -1,6 +1,18 @@
 import Foundation
 import os
 
+enum ServerKind: String, Codable, CaseIterable, Sendable {
+    case hermes
+    case craft
+
+    var displayName: String {
+        switch self {
+        case .hermes: return "Hermes"
+        case .craft: return "Craft"
+        }
+    }
+}
+
 /// Non-secret-shaped metadata for one configured Hermes Web UI server.
 ///
 /// This is the persisted account model introduced by I-039a (#15) — the
@@ -20,6 +32,9 @@ struct ServerAccount: Codable, Identifiable, Equatable, Sendable {
     let id: String
     /// Normalized base URL (scheme + host [+ port]); equal to `id` in this slice.
     var urlString: String
+    /// The wire protocol spoken by this server. Missing values decode as Hermes
+    /// so registries written before Craft support remain valid.
+    var kind: ServerKind
     /// User-facing label. Seeded from the global identity on migration; editable
     /// per server in #17.
     var displayName: String
@@ -39,6 +54,7 @@ struct ServerAccount: Codable, Identifiable, Equatable, Sendable {
     init(
         id: String,
         urlString: String,
+        kind: ServerKind = .hermes,
         displayName: String,
         initials: String,
         headerLogoColorHex: String,
@@ -48,6 +64,7 @@ struct ServerAccount: Codable, Identifiable, Equatable, Sendable {
     ) {
         self.id = id
         self.urlString = urlString
+        self.kind = kind
         self.displayName = displayName
         self.initials = initials
         self.headerLogoColorHex = headerLogoColorHex
@@ -59,6 +76,7 @@ struct ServerAccount: Codable, Identifiable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id
         case urlString
+        case kind
         case displayName
         case initials
         case headerLogoColorHex
@@ -82,6 +100,7 @@ struct ServerAccount: Codable, Identifiable, Equatable, Sendable {
         }
         id = decodedID ?? resolved
         urlString = decodedURL ?? resolved
+        kind = try container.decodeIfPresent(ServerKind.self, forKey: .kind) ?? .hermes
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
         initials = try container.decodeIfPresent(String.self, forKey: .initials) ?? ""
         headerLogoColorHex = try container.decodeIfPresent(String.self, forKey: .headerLogoColorHex)
@@ -176,7 +195,7 @@ final class ServerRegistry: @unchecked Sendable {
     /// seeded from the current global identity defaults. Callers pass an
     /// already-normalized URL (`AuthManager.normalizedServerURL`).
     @discardableResult
-    func activate(url: URL) -> ServerAccount {
+    func activate(url: URL, kind: ServerKind = .hermes) -> ServerAccount {
         let id = url.absoluteString
         // When re-activating an already-registered server we mirror its (possibly
         // per-server-edited, #17) identity into the global identity defaults so the
@@ -198,7 +217,7 @@ final class ServerRegistry: @unchecked Sendable {
                 return existing
             }
 
-            let account = makeSeededAccount(id: id, url: url)
+            let account = makeSeededAccount(id: id, url: url, kind: kind)
             snapshot.servers.append(account)
             snapshot.activeServerID = id
             persist(snapshot)
@@ -303,7 +322,7 @@ final class ServerRegistry: @unchecked Sendable {
     /// Builds a fresh entry, seeding per-server identity from the global identity
     /// defaults and falling back to a host-derived label/initials when those are
     /// empty (intake: "derive from the normalized host by default").
-    private func makeSeededAccount(id: String, url: URL) -> ServerAccount {
+    private func makeSeededAccount(id: String, url: URL, kind: ServerKind) -> ServerAccount {
         let hostFallback = url.host ?? url.absoluteString
         let storedName = (identityDefaults.string(forKey: SessionIdentitySettings.displayNameKey) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -322,6 +341,7 @@ final class ServerRegistry: @unchecked Sendable {
         return ServerAccount(
             id: id,
             urlString: id,
+            kind: kind,
             displayName: displayName,
             initials: initials,
             headerLogoColorHex: colorHex,

@@ -31,6 +31,35 @@ final class ServerRegistryTests: XCTestCase {
         XCTAssertEqual(registry.servers.map(\.id), ["https://example.test"])
         XCTAssertEqual(registry.activeServerID, "https://example.test")
         XCTAssertEqual(registry.activeServer, account)
+        XCTAssertEqual(account.kind, .hermes)
+    }
+
+    func testActivatePersistsCraftKind() throws {
+        let keychain = InMemoryKeychainStore()
+        let registry = makeRegistry(keychain: keychain)
+
+        registry.activate(url: try url("ws://localhost:9100"), kind: .craft)
+
+        let restored = ServerRegistry(keychain: keychain)
+        XCTAssertEqual(restored.activeServer?.kind, .craft)
+    }
+
+    func testLegacyAccountWithoutKindDecodesAsHermes() throws {
+        let data = Data("""
+        {
+          "id": "https://example.test",
+          "urlString": "https://example.test",
+          "displayName": "Example",
+          "initials": "EX",
+          "headerLogoColorHex": "#5B7CFF",
+          "createdAt": 0,
+          "updatedAt": 0
+        }
+        """.utf8)
+
+        let account = try JSONDecoder().decode(ServerAccount.self, from: data)
+
+        XCTAssertEqual(account.kind, .hermes)
     }
 
     // MARK: - Duplicate prevention

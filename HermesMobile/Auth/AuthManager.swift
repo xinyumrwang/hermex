@@ -69,6 +69,7 @@ final class AuthManager {
     /// — used by `addServer` to probe a new server without disturbing the active
     /// server's live headers (#17).
     private let probeClientFactory: (URL, [CustomHeader]) -> any AuthAPIClient
+    private let craftClientFactory: (URL) -> any CraftAuthenticating
     private let headerStore: CustomHeaderStore
     private let logoutTimeout: Duration
     private let serverRegistry: ServerRegistry
@@ -79,6 +80,9 @@ final class AuthManager {
         probeClientFactory: @escaping (URL, [CustomHeader]) -> any AuthAPIClient = { url, headers in
             APIClient(baseURL: url, customHeaderProvider: { headers })
         },
+        craftClientFactory: @escaping (URL) -> any CraftAuthenticating = {
+            CraftAuthenticationClient(serverURL: $0)
+        },
         headerStore: CustomHeaderStore = .shared,
         logoutTimeout: Duration = .seconds(5),
         serverRegistry: ServerRegistry = .shared
@@ -86,6 +90,7 @@ final class AuthManager {
         self.keychain = keychain
         self.clientFactory = clientFactory
         self.probeClientFactory = probeClientFactory
+        self.craftClientFactory = craftClientFactory
         self.headerStore = headerStore
         self.logoutTimeout = logoutTimeout
         self.serverRegistry = serverRegistry
@@ -96,6 +101,11 @@ final class AuthManager {
     /// The active server's id (its normalized URL string), or nil when
     /// unconfigured. Used by the Settings list to mark which row is active.
     var activeServerID: String? { state.server?.absoluteString }
+
+    var activeServerKind: ServerKind {
+        guard let activeServerID else { return .hermes }
+        return servers.first(where: { $0.id == activeServerID })?.kind ?? .hermes
+    }
 
     /// Re-reads the registry into the observable `servers` snapshot. Called after
     /// every registry mutation routed through this manager.
@@ -124,6 +134,58 @@ final class AuthManager {
         let client = clientFactory(serverURL)
 
         return try await testConnection(client: client)
+    }
+
+    func testCraftConnection(serverURLString: String, token: String) async throws -> CraftHandshake {
+        let serverURL = try CraftAuthenticationClient.normalizedServerURL(from: serverURLString)
+        return try await craftClientFactory(serverURL).authenticate(token: token)
+    }
+
+    /// Verifies the Craft protocol handshake before persisting anything. The
+    /// pre-shared token is stored only in a URL-scoped Keychain entry and is
+    /// never copied into the server registry or UserDefaults.
+    func configureCraft(serverURLString: String, token: String) async {
+        lastErrorMessage = nil
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        do {
+            guard !trimmedToken.isEmpty else { throw CraftConnectionError.tokenRequired }
+            let serverURL = try CraftAuthenticationClient.normalizedServerURL(from: serverURLString)
+            _ = try await craftClientFactory(serverURL).authenticate(token: trimmedToken)
+
+            try keychain.save(trimmedToken, forKey: .craftToken, scope: serverURL.absoluteString)
+            do {
+                try keychain.save(serverURL.absoluteString, forKey: .serverURL)
+            } catch {
+                try? keychain.delete(.craftToken, scope: serverURL.absoluteString)
+                throw error
+            }
+            serverRegistry.activate(url: serverURL, kind: .craft)
+            headerStore.replace(with: [])
+            refreshServers()
+            state = .loggedIn(server: serverURL)
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func addCraftServer(serverURLString: String, token: String) async -> AddServerOutcome {
+        lastErrorMessage = nil
+        let serverURL: URL
+        do {
+            serverURL = try CraftAuthenticationClient.normalizedServerURL(from: serverURLString)
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return .failed
+        }
+        guard !serverRegistry.servers.contains(where: { $0.id == serverURL.absoluteString }) else {
+            lastErrorMessage = String(localized: "This server is already configured.")
+            return .failed
+        }
+
+        await configureCraft(serverURLString: serverURL.absoluteString, token: token)
+        return lastErrorMessage == nil ? .added(serverURL) : .failed
     }
 
     private func testConnection(client: any AuthAPIClient) async throws -> AuthStatusResponse {
@@ -303,7 +365,7 @@ final class AuthManager {
             return
         }
 
-        if case .loggedIn = state {
+        if case .loggedIn = state, activeServerKind == .hermes {
             await attemptBestEffortServerLogout(server: active)
         }
 
@@ -319,7 +381,7 @@ final class AuthManager {
         let isActive = state.server?.absoluteString == account.id
 
         if isActive {
-            if case .loggedIn = state {
+            if case .loggedIn = state, account.kind == .hermes {
                 await attemptBestEffortServerLogout(server: serverURL)
             }
             advanceAfterRemoving(activeServer: serverURL)
@@ -342,7 +404,11 @@ final class AuthManager {
         serverRegistry.setActive(id: account.id)
         refreshServers()
         try? keychain.save(serverURL.absoluteString, forKey: .serverURL)
-        hydrateCustomHeaders(for: serverURL)
+        if account.kind == .hermes {
+            hydrateCustomHeaders(for: serverURL)
+        } else {
+            headerStore.replace(with: [])
+        }
         // Drop the App Intents profile picker cache (#339): it holds the previous server's
         // profiles, which would leak into Shortcuts / Siri if the new server's fetch is
         // delayed or fails. The new server's profiles reload on the next foreground fetch.
@@ -386,7 +452,11 @@ final class AuthManager {
 
         if let nextActive, let nextURL = URL(string: nextActive.urlString) {
             try? keychain.save(nextURL.absoluteString, forKey: .serverURL)
-            hydrateCustomHeaders(for: nextURL)
+            if nextActive.kind == .hermes {
+                hydrateCustomHeaders(for: nextURL)
+            } else {
+                headerStore.replace(with: [])
+            }
             lastErrorMessage = nil
             state = .loggedIn(server: nextURL)
         } else {
@@ -400,6 +470,7 @@ final class AuthManager {
     /// its cookies — without touching the registry or the global `server_url` key.
     private func clearLocalArtifacts(for server: URL) {
         try? keychain.delete(.customHeaders, scope: server.absoluteString)
+        try? keychain.delete(.craftToken, scope: server.absoluteString)
         clearSessionCookies(for: server)
     }
 
@@ -465,6 +536,7 @@ final class AuthManager {
 
         if let server {
             try? keychain.delete(.customHeaders, scope: server.absoluteString)
+            try? keychain.delete(.craftToken, scope: server.absoluteString)
             clearSessionCookies(for: server)
         } else {
             clearAllSessionCookies()
@@ -548,11 +620,15 @@ final class AuthManager {
         // registry (#15). Idempotent: an already-registered server is just
         // re-activated, and its per-server identity is only seeded on first
         // insert, so #17 edits survive relaunch.
-        serverRegistry.activate(url: savedURL)
+        let account = serverRegistry.activate(url: savedURL)
         // Hydrate this server's headers (migrating the pre-#16 global blob on the
         // first launch after the split) before any client is built, so the first
         // request after launch carries the saved headers (#255/#16).
-        hydrateCustomHeaders(for: savedURL)
+        if account.kind == .hermes {
+            hydrateCustomHeaders(for: savedURL)
+        } else {
+            headerStore.replace(with: [])
+        }
         state = .loggedIn(server: savedURL)
     }
 

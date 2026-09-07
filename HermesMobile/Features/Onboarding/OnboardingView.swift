@@ -16,6 +16,7 @@ struct OnboardingView: View {
         _viewModel = State(
             initialValue: OnboardingViewModel(
                 savedServer: savedServer,
+                savedServerKind: savedServer == nil ? .hermes : authManager.activeServerKind,
                 // Headers survive a session-expiry sign-out, so prefill them on
                 // re-login behind a proxy (empty on first run / full sign-out).
                 savedHeaders: authManager.currentCustomHeaders,
