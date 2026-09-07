@@ -9,6 +9,11 @@
 /* Begin PBXBuildFile section */
 		C44900000000000000000001 /* CraftAuthenticationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000011 /* CraftAuthenticationClient.swift */; };
 		C44900000000000000000002 /* CraftAuthenticationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000012 /* CraftAuthenticationTests.swift */; };
+		C44900000000000000000003 /* CraftRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000013 /* CraftRPCClient.swift */; };
+		C44900000000000000000004 /* CraftSessionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000014 /* CraftSessionViews.swift */; };
+		C44900000000000000000005 /* CraftConnectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000015 /* CraftConnectionSettingsView.swift */; };
+		C44900000000000000000006 /* CraftSessionInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000016 /* CraftSessionInspectorView.swift */; };
+		C44900000000000000000007 /* CraftTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000017 /* CraftTasksView.swift */; };
 		05814DEA5DE4690F730B1E15 /* InsightsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931EC010A2D940B0E42287A4 /* InsightsViewModel.swift */; };
 		26AB000000000000000000B1 /* ProvidersViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F1 /* ProvidersViewModel.swift */; };
 		26AB000000000000000000B2 /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F2 /* ProvidersView.swift */; };
@@ -468,6 +473,11 @@
 /* Begin PBXFileReference section */
 		C44900000000000000000011 /* CraftAuthenticationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftAuthenticationClient.swift; sourceTree = "<group>"; };
 		C44900000000000000000012 /* CraftAuthenticationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftAuthenticationTests.swift; sourceTree = "<group>"; };
+		C44900000000000000000013 /* CraftRPCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftRPCClient.swift; sourceTree = "<group>"; };
+		C44900000000000000000014 /* CraftSessionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftSessionViews.swift; sourceTree = "<group>"; };
+		C44900000000000000000015 /* CraftConnectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftConnectionSettingsView.swift; sourceTree = "<group>"; };
+		C44900000000000000000016 /* CraftSessionInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftSessionInspectorView.swift; sourceTree = "<group>"; };
+		C44900000000000000000017 /* CraftTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftTasksView.swift; sourceTree = "<group>"; };
 		0485E1E1FFB64A24BB729CD4 /* SlashCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandTests.swift; sourceTree = "<group>"; };
 		DFB41BE54A19587EB9037B7B /* ComposerFileTriggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerFileTriggerTests.swift; sourceTree = "<group>"; };
 		8E518E24247E5D05AA76D419 /* FilePathSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePathSearchTests.swift; sourceTree = "<group>"; };
@@ -1131,6 +1141,7 @@
 			isa = PBXGroup;
 			children = (
 				C44900000000000000000011 /* CraftAuthenticationClient.swift */,
+				C44900000000000000000013 /* CraftRPCClient.swift */,
 				1A2B3C4D5E6F7000000000B2 /* APIClient.swift */,
 				C04000000000000000000011 /* APIClient+Sessions.swift */,
 				C04000000000000000000012 /* APIClient+Projects.swift */,
@@ -1274,6 +1285,8 @@
 		1A2B3C4D5E6F7000000000C6 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				C44900000000000000000014 /* CraftSessionViews.swift */,
+				C44900000000000000000016 /* CraftSessionInspectorView.swift */,
 				1A2B3C4D5E6F7000000000BF /* ChatView.swift */,
 				C05100000000000000000011 /* ChatTranscriptView.swift */,
 				C05100000000000000000012 /* ChatMessageActions.swift */,
@@ -1432,6 +1445,7 @@
 		1A2B3C4D5E6F7000000000F7 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				C44900000000000000000015 /* CraftConnectionSettingsView.swift */,
 				1A2B3C4D5E6F7000000000F6 /* SettingsView.swift */,
 				C012400000000000000003 /* AppIconSettingsSection.swift */,
 				1A2B3C4D5E6F70000000115 /* DefaultModelPickerView.swift */,
@@ -1544,6 +1558,7 @@
 		3F91D2A54B9A4F66A2C01020 /* Tasks */ = {
 			isa = PBXGroup;
 			children = (
+				C44900000000000000000017 /* CraftTasksView.swift */,
 				3F91D2A54B9A4F66A2C01012 /* TasksView.swift */,
 				D400000000000000000001 /* CronJobRowView.swift */,
 				3F91D2A54B9A4F66A2C01013 /* TasksViewModel.swift */,
@@ -1773,6 +1788,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				C44900000000000000000001 /* CraftAuthenticationClient.swift in Sources */,
+				C44900000000000000000003 /* CraftRPCClient.swift in Sources */,
+				C44900000000000000000004 /* CraftSessionViews.swift in Sources */,
+				C44900000000000000000005 /* CraftConnectionSettingsView.swift in Sources */,
+				C44900000000000000000006 /* CraftSessionInspectorView.swift in Sources */,
+				C44900000000000000000007 /* CraftTasksView.swift in Sources */,
 				1A2B3C4D5E6F700000000001 /* HermesMobileApp.swift in Sources */,
 				1A2B3C4D5E6F700000000002 /* ContentView.swift in Sources */,
 				1A2B3C4D5E6F700000000338 /* HermexAppIntents.swift in Sources */,

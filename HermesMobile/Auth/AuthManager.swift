@@ -107,6 +107,16 @@ final class AuthManager {
         return servers.first(where: { $0.id == activeServerID })?.kind ?? .hermes
     }
 
+    /// Loads the active Craft credential only for construction of the
+    /// server-bound RPC client. The token is never copied into observable state,
+    /// the server registry, UserDefaults, or logs.
+    func craftToken(for server: URL) -> String? {
+        guard servers.first(where: { $0.id == server.absoluteString })?.kind == .craft else {
+            return nil
+        }
+        return try? keychain.load(.craftToken, scope: server.absoluteString)
+    }
+
     /// Re-reads the registry into the observable `servers` snapshot. Called after
     /// every registry mutation routed through this manager.
     private func refreshServers() {

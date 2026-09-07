@@ -90,6 +90,51 @@ final class CraftAuthenticationTests: XCTestCase {
         XCTAssertNil(keychain.scopedValue(.craftToken, scope: "ws://localhost:9100"))
     }
 
+    func testCraftTokenCanOnlyBeLoadedForItsCraftServer() async throws {
+        let keychain = InMemoryKeychainStore()
+        let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
+        let craft = MockCraftAuthenticator(result: .success(Self.handshake))
+        let manager = makeManager(keychain: keychain, registry: registry, craft: craft)
+
+        await manager.configureCraft(serverURLString: "localhost:9100", token: "secret")
+
+        XCTAssertEqual(manager.craftToken(for: URL(string: "ws://localhost:9100")!), "secret")
+        XCTAssertNil(manager.craftToken(for: URL(string: "ws://localhost:9200")!))
+        XCTAssertNil(manager.craftToken(for: URL(string: "https://localhost:9100")!))
+    }
+
+    func testCraftSessionEventDecodesStatusAndUserMessageShapesTolerantly() throws {
+        let decoder = JSONDecoder()
+        let status = try decoder.decode(
+            CraftSessionEvent.self,
+            from: Data(#"{"type":"status","sessionId":"s1","message":"Thinking","future":true}"#.utf8)
+        )
+        XCTAssertEqual(status.statusText, "Thinking")
+
+        let user = try decoder.decode(
+            CraftSessionEvent.self,
+            from: Data(#"{"type":"user_message","sessionId":"s1","message":{"id":"m1","role":"user","content":"Hello","timestamp":1}}"#.utf8)
+        )
+        XCTAssertEqual(user.message?.content, "Hello")
+
+        let permission = try decoder.decode(
+            CraftSessionEvent.self,
+            from: Data(#"{"type":"permission_request","sessionId":"s1","request":{"requestId":"p1","toolName":"bash","command":"git status","description":"Run a command"}}"#.utf8)
+        )
+        XCTAssertEqual(permission.request?.command, "git status")
+    }
+
+    func testCraftConnectionDecodesMixedModelVocabulary() throws {
+        let connection = try JSONDecoder().decode(
+            CraftLLMConnection.self,
+            from: Data(#"{"slug":"pi-api-key","name":"OpenAI","providerType":"pi","authType":"api_key","models":["gpt-5",{"id":"gpt-5-mini","name":"Mini"}],"isAuthenticated":true,"isDefault":false,"future":"ok"}"#.utf8)
+        )
+
+        XCTAssertEqual(connection.slug, "pi-api-key")
+        XCTAssertEqual(connection.models?.count, 2)
+        XCTAssertTrue(connection.isAuthenticated)
+    }
+
     private func makeManager(
         keychain: InMemoryKeychainStore,
         registry: ServerRegistry,

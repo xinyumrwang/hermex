@@ -62,7 +62,7 @@ struct ContentView: View {
             OnboardingView(authManager: authManager, savedServer: server)
         case .loggedIn(let server):
             if authManager.activeServerKind == .craft {
-                CraftConnectionView(authManager: authManager, server: server)
+                CraftHomeView(authManager: authManager, server: server)
                     .id(server)
             } else {
                 SessionListView(
@@ -182,70 +182,6 @@ struct ContentView: View {
 
     private func refreshWaitingSharedImport(in directory: URL) {
         hasWaitingSharedImport = (try? HermesShareDraft.hasPendingImport(in: directory)) ?? false
-    }
-}
-
-/// Craft authentication is live in this slice, while typed session RPC lands
-/// separately. Keeping Craft on its own root prevents its WebSocket URL from
-/// ever reaching Hermes' HTTP/SSE clients.
-private struct CraftConnectionView: View {
-    @Bindable var authManager: AuthManager
-    let server: URL
-    @State private var isShowingAddServer = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Label("Connection ok. Already signed in by this server.", systemImage: "checkmark.shield.fill")
-                        .foregroundStyle(.green)
-                    LabeledContent("Server", value: server.absoluteString)
-                } header: {
-                    Text(verbatim: "Craft RPC")
-                }
-
-                Section("Servers") {
-                    ForEach(authManager.servers) { account in
-                        Button {
-                            authManager.switchActiveServer(to: account)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(account.displayName)
-                                    Text(verbatim: "\(account.kind.displayName) · \(account.urlString)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if account.id == authManager.activeServerID {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Section {
-                    Button("Remove Server", role: .destructive) {
-                        Task { await authManager.signOut() }
-                    }
-                } footer: {
-                    Text(verbatim: "The Craft token is stored in the iOS Keychain and scoped to this server URL.")
-                }
-            }
-            .navigationTitle(Text(verbatim: "Craft"))
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Add Server", systemImage: "plus") {
-                        isShowingAddServer = true
-                    }
-                }
-            }
-            .sheet(isPresented: $isShowingAddServer) {
-                AddServerView(authManager: authManager)
-            }
-        }
     }
 }
 
