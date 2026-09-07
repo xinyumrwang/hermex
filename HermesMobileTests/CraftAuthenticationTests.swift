@@ -135,6 +135,83 @@ final class CraftAuthenticationTests: XCTestCase {
         XCTAssertTrue(connection.isAuthenticated)
     }
 
+    func testLiveCraftCoreWorkflowWhenConfigured() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let serverURLString = environment["HERMEX_CRAFT_TEST_URL"],
+              let serverURL = URL(string: serverURLString),
+              let token = environment["HERMEX_CRAFT_TEST_TOKEN"],
+              !token.isEmpty else {
+            throw XCTSkip("Set HERMEX_CRAFT_TEST_URL and HERMEX_CRAFT_TEST_TOKEN to run the live Craft workflow.")
+        }
+
+        let client = CraftRPCClient(serverURL: serverURL, token: token)
+        try await client.connect()
+        let workspaces: [CraftWorkspace] = try await client.request("server:getWorkspaces")
+        let workspace = try XCTUnwrap(workspaces.first)
+        let _: JSONValue = try await client.request("window:switchWorkspace", args: [.string(workspace.id)])
+
+        var createdSession: CraftSession?
+        do {
+            let session: CraftSession = try await client.request(
+                "sessions:create",
+                args: [.string(workspace.id), .object(["name": .string("Hermex simulator smoke")])]
+            )
+            createdSession = session
+
+            let listed: [CraftSession] = try await client.request("sessions:get")
+            XCTAssertTrue(listed.contains { $0.id == session.id })
+
+            let _: JSONValue = try await client.request(
+                "sessions:command",
+                args: [.string(session.id), .object(["type": .string("setPermissionMode"), "mode": .string("ask")])]
+            )
+            let _: JSONValue = try await client.request(
+                "sessions:command",
+                args: [.string(session.id), .object(["type": .string("setThinkingLevel"), "level": .string("medium")])]
+            )
+
+            let acknowledgement: CraftSendAcknowledgement = try await client.request(
+                "sessions:sendMessage",
+                args: [.string(session.id), .string("Hermex simulator RPC smoke test")]
+            )
+            XCTAssertTrue(acknowledgement.accepted)
+            let loaded: CraftSession? = try await client.request(
+                "sessions:getMessages",
+                args: [.string(session.id)]
+            )
+            XCTAssertTrue(loaded?.messages?.contains { $0.content == "Hermex simulator RPC smoke test" } == true)
+
+            let _: JSONValue = try await client.request(
+                "sessions:setNotes",
+                args: [.string(session.id), .string("simulator verified")]
+            )
+            let notes: String = try await client.request("sessions:getNotes", args: [.string(session.id)])
+            XCTAssertEqual(notes, "simulator verified")
+            let _: [CraftSessionFile] = try await client.request("sessions:getFiles", args: [.string(session.id)])
+            let _: [CraftLLMConnection] = try await client.request("LLM_Connection:listWithStatus")
+            let _: [String] = try await client.request("tasks:list", args: [.string(workspace.id)])
+            let _: JSONValue = try await client.request("sessions:cancel", args: [.string(session.id), .bool(true)])
+            let _: JSONValue = try await client.request(
+                "sessions:command",
+                args: [.string(session.id), .object(["type": .string("archive")])]
+            )
+            let _: JSONValue = try await client.request(
+                "sessions:command",
+                args: [.string(session.id), .object(["type": .string("unarchive")])]
+            )
+        } catch {
+            if let createdSession {
+                let _: JSONValue? = try? await client.request("sessions:delete", args: [.string(createdSession.id)])
+            }
+            throw error
+        }
+
+        if let createdSession {
+            let _: JSONValue = try await client.request("sessions:delete", args: [.string(createdSession.id)])
+        }
+        await client.disconnect()
+    }
+
     private func makeManager(
         keychain: InMemoryKeychainStore,
         registry: ServerRegistry,

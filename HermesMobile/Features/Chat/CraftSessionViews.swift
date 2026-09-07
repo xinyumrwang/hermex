@@ -260,7 +260,7 @@ final class CraftChatViewModel {
             return
         }
         do {
-            let _: Bool = try await client.request(
+            let _: JSONValue = try await client.request(
                 "sessions:cancel",
                 args: [.string(sessionID), .bool(false)]
             )
