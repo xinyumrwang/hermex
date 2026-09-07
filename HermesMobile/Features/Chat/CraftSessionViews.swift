@@ -140,7 +140,7 @@ final class CraftHomeViewModel {
             return
         }
         do {
-            let _: Bool = try await client.request(
+            let _: JSONValue = try await client.request(
                 "sessions:command",
                 args: [.string(session.id), .object(["type": .string("archive")])]
             )
@@ -170,6 +170,7 @@ final class CraftChatViewModel {
     private(set) var canSend = false
     private(set) var canCancel = false
     private(set) var pendingPermission: CraftPermissionRequest?
+    private(set) var isRespondingToPermission = false
     var draft = ""
     var errorMessage: String?
 
@@ -273,7 +274,8 @@ final class CraftChatViewModel {
 
     func respondToPermission(allowed: Bool, alwaysAllow: Bool = false) async {
         guard let request = pendingPermission else { return }
-        pendingPermission = nil
+        isRespondingToPermission = true
+        defer { isRespondingToPermission = false }
         do {
             let delivered: Bool = try await client.request(
                 "sessions:respondToPermission",
@@ -284,7 +286,11 @@ final class CraftChatViewModel {
                     .bool(alwaysAllow),
                 ]
             )
-            if !delivered { errorMessage = "The permission request is no longer active." }
+            if delivered {
+                pendingPermission = nil
+            } else {
+                errorMessage = "The permission request is no longer active."
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -374,11 +380,15 @@ struct CraftHomeView: View {
     @Bindable var authManager: AuthManager
     let server: URL
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(HeaderLogoColor.storageKey) private var headerLogoColorHex = HeaderLogoColor.defaultHex
     @State private var viewModel: CraftHomeViewModel?
     @State private var isShowingAddServer = false
     @State private var isShowingConnections = false
     @State private var isShowingTasks = false
     @State private var isCreatingWorkspace = false
+    @State private var unavailableFeature: CraftUnavailableFeature?
+    @State private var searchText = ""
+    @State private var isSearching = false
     @State private var workspaceName = ""
 
     var body: some View {
@@ -394,8 +404,7 @@ struct CraftHomeView: View {
                     )
                 }
             }
-            .navigationTitle("Craft")
-            .toolbar { toolbar }
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $isShowingAddServer) {
                 AddServerView(authManager: authManager)
             }
@@ -407,6 +416,22 @@ struct CraftHomeView: View {
             .sheet(isPresented: $isShowingTasks) {
                 if let viewModel, let workspaceID = viewModel.selectedWorkspaceID {
                     CraftTasksView(client: viewModel.client, workspaceID: workspaceID)
+                }
+            }
+            .sheet(item: $unavailableFeature) { feature in
+                NavigationStack {
+                    ContentUnavailableView {
+                        Label(feature.title, systemImage: feature.systemImage)
+                    } description: {
+                        Text("This Craft server does not provide the API required by this Hermex feature.")
+                    }
+                    .navigationTitle(feature.title)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { unavailableFeature = nil }
+                        }
+                    }
                 }
             }
             .alert("New workspace", isPresented: $isCreatingWorkspace) {
@@ -449,59 +474,144 @@ struct CraftHomeView: View {
                     .disabled(!model.canCreateWorkspace)
             }
         } else {
-            List {
-                connectionSection(model)
+            ZStack(alignment: .bottomTrailing) {
+                List {
+                    hermexHeader(model)
+                        .sessionsTopChromeListRow()
 
-                if model.sessions.isEmpty {
-                    Section {
-                        ContentUnavailableView(
-                            "No conversations",
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text("Start a conversation in this Craft workspace.")
-                        )
-                        Button("New conversation", systemImage: "square.and.pencil") {
-                            Task { await model.createSession() }
-                        }
-                        .disabled(!model.canCreateSession)
+                    if !isSearching {
+                        hermexUtilities(model)
+                            .padding(.top, 10)
+                            .sessionsScreenListRow()
                     }
-                } else {
-                    Section("Conversations") {
-                        ForEach(model.sessions) { session in
-                            NavigationLink {
-                                CraftChatView(client: model.client, session: session)
-                            } label: {
-                                CraftSessionRow(session: session)
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button("Archive", systemImage: "archivebox") {
-                                    Task { await model.archive(session) }
+
+                    Section("Sessions") {
+                        if filteredSessions(model).isEmpty {
+                            ContentUnavailableView(
+                                searchText.isEmpty ? "No Sessions" : "No Results",
+                                systemImage: searchText.isEmpty ? "bubble.left.and.bubble.right" : "magnifyingglass",
+                                description: Text(searchText.isEmpty
+                                    ? "Start a new chat in this workspace."
+                                    : "No sessions match your search.")
+                            )
+                        } else {
+                            ForEach(filteredSessions(model)) { session in
+                                NavigationLink {
+                                    CraftChatView(client: model.client, session: session)
+                                } label: {
+                                    SessionRowView(session: hermesSessionSummary(session))
                                 }
-                                .tint(.orange)
-                                .disabled(!model.canArchiveSession)
+                                .buttonStyle(.plain)
+                                .swipeActions(edge: .trailing) {
+                                    Button("Archive", systemImage: "archivebox") {
+                                        Task { await model.archive(session) }
+                                    }
+                                    .tint(.orange)
+                                    .disabled(!model.canArchiveSession)
+                                }
                             }
                         }
                     }
-                }
+                    .sessionsScreenListRow()
 
-                if let error = model.errorMessage {
-                    Section {
+                    if let error = model.errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
+                            .sessionsScreenListRow()
                     }
+
+                    Color.clear
+                        .frame(height: 104)
+                        .sessionsScreenListRow()
+                        .accessibilityHidden(true)
+                }
+                .listStyle(.plain)
+                .environment(\.defaultMinListRowHeight, 0)
+                .scrollContentBackground(.hidden)
+                .background(Color(.systemBackground))
+                .refreshable { await model.start() }
+
+                if !isSearching {
+                    newSessionButton(model)
+                        .padding(.trailing, 24)
+                        .padding(.bottom, 22)
                 }
             }
-            .refreshable { await model.start() }
         }
     }
 
-    private func connectionSection(_ model: CraftHomeViewModel) -> some View {
-        Section {
-            Label(
-                model.isConnected ? "Connected" : "Disconnected",
-                systemImage: model.isConnected ? "checkmark.shield.fill" : "wifi.exclamationmark"
-            )
-            .foregroundStyle(model.isConnected ? .green : .orange)
+    private func hermexHeader(_ model: CraftHomeViewModel) -> some View {
+        HStack(spacing: 16) {
+            HermesHeaderLogo(selectedColor: HeaderLogoColor.color(for: headerLogoColorHex))
+                .frame(width: isSearching ? 0 : 160, alignment: .leading)
+                .opacity(isSearching ? 0 : 1)
+                .clipped()
 
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .onTapGesture { isSearching = true }
+
+                if isSearching {
+                    TextField("Search sessions", text: $searchText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        searchText = ""
+                        isSearching = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .frame(width: 44, height: 44)
+                    }
+                } else {
+                    Menu {
+                        Button("Model connections", systemImage: "cpu") { isShowingConnections = true }
+                        Button("Add Server…", systemImage: "plus") { isShowingAddServer = true }
+                        Button("Create workspace", systemImage: "square.grid.2x2") { isCreatingWorkspace = true }
+                            .disabled(!model.canCreateWorkspace)
+                        Divider()
+                        Button("Remove server", systemImage: "trash", role: .destructive) {
+                            Task { await authManager.signOut() }
+                        }
+                    } label: {
+                        Text("C")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.black)
+                            .frame(width: 36, height: 36)
+                            .background(HeaderLogoColor.color(for: headerLogoColorHex), in: Circle())
+                    }
+                    .frame(width: 44, height: 44)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .sessionsChromeGlass(isInteractive: true, in: Capsule())
+            .clipShape(Capsule())
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
+    }
+
+    private func hermexUtilities(_ model: CraftHomeViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SidebarNavButton(title: "Tasks", assetImage: "LucideCalendarClock") {
+                isShowingTasks = true
+            }
+            SidebarNavButton(title: "Kanban", assetImage: "LucideColumns3") {
+                unavailableFeature = .kanban
+            }
+            SidebarNavButton(title: "Skills", assetImage: "LucideHammer") {
+                unavailableFeature = .skills
+            }
+            SidebarNavButton(title: "Memory", assetImage: "LucideBrain") {
+                unavailableFeature = .memory
+            }
+            SidebarNavButton(title: "Usage", assetImage: "LucideChartColumnIncreasing") {
+                unavailableFeature = .usage
+            }
+            SidebarNavButton(title: "Active Profile", assetImage: "LucideUserRoundCog") {
+                unavailableFeature = .profiles
+            }
             Menu {
                 ForEach(model.workspaces) { workspace in
                     Button {
@@ -518,61 +628,87 @@ struct CraftHomeView: View {
                 Button("New workspace", systemImage: "plus") { isCreatingWorkspace = true }
                     .disabled(!model.canCreateWorkspace)
             } label: {
-                LabeledContent("Workspace", value: model.selectedWorkspace?.name ?? "Select")
+                HStack(spacing: 18) {
+                    SidebarUtilityIcon(assetImage: "LucideFolder")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Projects").font(.body.weight(.semibold))
+                        Text(model.selectedWorkspace?.name ?? "Select workspace")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(minHeight: 44)
             }
-        } header: {
-            Text(verbatim: server.absoluteString)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func newSessionButton(_ model: CraftHomeViewModel) -> some View {
+        Button {
+            Task { await model.createSession() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "square.and.pencil").font(.title3.weight(.semibold))
+                Text("Chat").font(.headline.weight(.semibold))
+            }
+            .foregroundStyle(.black)
+            .padding(.horizontal, 22)
+            .frame(height: 58)
+            .background(HeaderLogoColor.color(for: headerLogoColorHex), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(SessionListFloatingChatButtonStyle())
+        .disabled(model.selectedWorkspace == nil || !model.canCreateSession)
+    }
+
+    private func filteredSessions(_ model: CraftHomeViewModel) -> [CraftSession] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.sessions }
+        return model.sessions.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || ($0.preview?.localizedCaseInsensitiveContains(query) ?? false)
         }
     }
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            Button("New conversation", systemImage: "square.and.pencil") {
-                Task { await viewModel?.createSession() }
-            }
-            .disabled(viewModel?.selectedWorkspace == nil || viewModel?.canCreateSession != true)
-        }
-        ToolbarItem(placement: .topBarLeading) {
-            Menu {
-                Button("Add server", systemImage: "plus") { isShowingAddServer = true }
-                Button("Model connections", systemImage: "cpu") { isShowingConnections = true }
-                    .disabled(viewModel == nil)
-                Button("Tasks", systemImage: "point.3.connected.trianglepath.dotted") { isShowingTasks = true }
-                    .disabled(viewModel?.selectedWorkspaceID == nil)
-                Button("Create workspace", systemImage: "square.grid.2x2") { isCreatingWorkspace = true }
-                    .disabled(viewModel?.canCreateWorkspace != true)
-                Divider()
-                Button("Remove server", systemImage: "trash", role: .destructive) {
-                    Task { await authManager.signOut() }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-        }
+    private func hermesSessionSummary(_ session: CraftSession) -> SessionSummary {
+        SessionSummary(
+            sessionId: session.id,
+            title: session.title,
+            workspace: session.workspaceName,
+            model: session.model,
+            messageCount: session.messages?.count,
+            lastMessageAt: normalizedTimestamp(session.lastMessageAt),
+            pinned: session.isFlagged,
+            archived: session.isArchived,
+            isStreaming: session.isProcessing,
+            sourceLabel: "Craft"
+        )
+    }
+
+    private func normalizedTimestamp(_ value: Double?) -> Double? {
+        guard let value else { return nil }
+        return value > 10_000_000_000 ? value / 1_000 : value
     }
 }
 
-private struct CraftSessionRow: View {
-    let session: CraftSession
+private enum CraftUnavailableFeature: String, Identifiable {
+    case kanban, skills, memory, usage, profiles
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: session.isProcessing == true ? "bolt.fill" : "bubble.left")
-                .foregroundStyle(session.isProcessing == true ? .yellow : .secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.title).font(.headline).lineLimit(1)
-                if let preview = session.preview, !preview.isEmpty {
-                    Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            Spacer()
-            if session.hasUnread == true {
-                Circle().fill(.yellow).frame(width: 8, height: 8)
-            }
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var systemImage: String {
+        switch self {
+        case .kanban: "rectangle.3.group"
+        case .skills: "hammer"
+        case .memory: "brain"
+        case .usage: "chart.bar"
+        case .profiles: "person.crop.circle.badge.gearshape"
         }
-        .padding(.vertical, 4)
     }
 }
 
@@ -580,6 +716,7 @@ struct CraftChatView: View {
     @State private var viewModel: CraftChatViewModel
     @FocusState private var composerFocused: Bool
     @State private var isShowingInspector = false
+    @AppStorage(HeaderLogoColor.storageKey) private var headerLogoColorHex = HeaderLogoColor.defaultHex
 
     init(client: CraftRPCClient, session: CraftSession) {
         _viewModel = State(initialValue: CraftChatViewModel(client: client, session: session))
@@ -590,17 +727,29 @@ struct CraftChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(viewModel.messages) { message in
-                        CraftMessageRow(message: message)
+                        CraftTranscriptRow(message: message)
                             .id(message.id)
                     }
                     if !viewModel.streamingText.isEmpty {
-                        CraftStreamingMessage(text: viewModel.streamingText)
+                        MessageBubbleView(
+                            message: ChatMessage(
+                                role: "assistant",
+                                content: viewModel.streamingText,
+                                timestamp: Date().timeIntervalSince1970,
+                                messageId: "craft-stream"
+                            ),
+                            transcriptMediaCacheNamespace: "craft:\(viewModel.sessionID)",
+                            isStreaming: true
+                        )
                             .id("craft-stream")
                     }
                     if let status = viewModel.statusMessage {
                         Label(status, systemImage: "gearshape.2")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .chatTimelineAccessorySurface(fallbackMaterial: .thinMaterial, in: Capsule())
                             .id("craft-status")
                     }
                 }
@@ -612,7 +761,11 @@ struct CraftChatView: View {
             }
             .onChange(of: viewModel.streamingText) { proxy.scrollTo("craft-stream", anchor: .bottom) }
         }
-        .safeAreaInset(edge: .bottom) { composer }
+        .safeAreaInset(edge: .bottom) {
+            composer
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
         .navigationTitle(viewModel.session.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -627,25 +780,18 @@ struct CraftChatView: View {
         .sheet(isPresented: $isShowingInspector) {
             CraftSessionInspectorView(client: viewModel.client, session: viewModel.session)
         }
-        .alert(
-            "Permission requested",
-            isPresented: Binding(
-                get: { viewModel.pendingPermission != nil },
-                set: { if !$0 { viewModel.dismissPermission() } }
-            ),
-            presenting: viewModel.pendingPermission
-        ) { _ in
-            Button("Deny", role: .destructive) {
-                Task { await viewModel.respondToPermission(allowed: false) }
+        .overlay {
+            if let prompt = permissionPrompt {
+                ApprovalRequestOverlay(
+                    prompt: prompt,
+                    isResponding: viewModel.isRespondingToPermission,
+                    errorMessage: viewModel.errorMessage,
+                    onChoice: respondToPermission,
+                    onSkipAll: {},
+                    showsSkipAll: false
+                )
+                .zIndex(10)
             }
-            Button("Always allow") {
-                Task { await viewModel.respondToPermission(allowed: true, alwaysAllow: true) }
-            }
-            Button("Allow") {
-                Task { await viewModel.respondToPermission(allowed: true) }
-            }
-        } message: { request in
-            Text(request.command ?? request.description)
         }
         .alert("Craft", isPresented: Binding(
             get: { viewModel.errorMessage != nil },
@@ -658,83 +804,123 @@ struct CraftChatView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        HStack(alignment: .bottom, spacing: 8) {
             TextField("Message Craft", text: $viewModel.draft, axis: .vertical)
-                .lineLimit(1...6)
-                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...8)
+                .padding(.leading, 16)
+                .padding(.vertical, 12)
                 .focused($composerFocused)
                 .onSubmit { Task { await viewModel.send() } }
 
-            if viewModel.isSending {
-                Button {
+            Button {
+                if viewModel.isSending, trimmedDraft.isEmpty {
                     Task { await viewModel.cancel() }
-                } label: {
-                    Image(systemName: "stop.fill")
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(!viewModel.canCancel)
-                .accessibilityLabel("Stop Craft response")
-            } else {
-                Button {
+                } else {
                     Task { await viewModel.send() }
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .frame(width: 32, height: 32)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    !viewModel.canSend
-                        || viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-                .accessibilityLabel("Send message to Craft")
+            } label: {
+                Image(systemName: viewModel.isSending && trimmedDraft.isEmpty ? "stop.fill" : "arrow.up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background(actionButtonColor, in: Circle())
+                    .foregroundStyle(actionButtonForeground)
+            }
+            .buttonStyle(.chatTactile(.icon))
+            .padding(5)
+            .disabled(actionButtonDisabled)
+            .accessibilityLabel(viewModel.isSending && trimmedDraft.isEmpty ? "Stop response" : "Send")
+        }
+        .adaptiveGlass(
+            .regular,
+            isInteractive: true,
+            fallbackMaterial: .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: ChatComposerMetrics.cardCornerRadius, style: .continuous)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: ChatComposerMetrics.cardCornerRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+    }
+
+    private var trimmedDraft: String {
+        viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var actionButtonDisabled: Bool {
+        if viewModel.isSending, trimmedDraft.isEmpty { return !viewModel.canCancel }
+        return !viewModel.canSend || trimmedDraft.isEmpty
+    }
+
+    private var actionButtonColor: Color {
+        actionButtonDisabled ? Color.secondary.opacity(0.16) : HeaderLogoColor.color(for: headerLogoColorHex)
+    }
+
+    private var actionButtonForeground: Color {
+        actionButtonDisabled ? .secondary : .black
+    }
+
+    private var permissionPrompt: ApprovalPromptState? {
+        guard let request = viewModel.pendingPermission else { return nil }
+        return ApprovalPromptState(
+            sessionID: viewModel.sessionID,
+            pending: PendingApproval(
+                approvalId: request.requestId,
+                command: request.command,
+                description: request.description
+            ),
+            pendingCount: 1
+        )
+    }
+
+    private func respondToPermission(_ choice: ApprovalChoice) {
+        Task {
+            switch choice {
+            case .deny:
+                await viewModel.respondToPermission(allowed: false)
+            case .always:
+                await viewModel.respondToPermission(allowed: true, alwaysAllow: true)
+            case .once, .session:
+                await viewModel.respondToPermission(allowed: true)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
     }
 }
 
-private struct CraftMessageRow: View {
+private struct CraftTranscriptRow: View {
     let message: CraftMessage
 
+    @ViewBuilder
     var body: some View {
-        HStack {
-            if message.role == "user" { Spacer(minLength: 48) }
-            VStack(alignment: .leading, spacing: 5) {
-                if message.role == "assistant" {
-                    MarkdownRenderer(content: message.content)
-                } else if message.role == "tool" {
-                    Label(message.toolName ?? "Tool", systemImage: "wrench.and.screwdriver")
-                        .font(.caption.bold())
-                    Text(message.toolResult ?? message.content)
-                        .font(.caption.monospaced())
-                        .lineLimit(8)
-                } else {
-                    Text(message.content).textSelection(.enabled)
-                }
-            }
-            .padding(12)
-            .background(message.role == "user" ? Color.accentColor : Color.secondary.opacity(0.14))
-            .foregroundStyle(message.role == "user" ? Color.white : Color.primary)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            if message.role != "user" { Spacer(minLength: 28) }
+        if message.role == "tool", let entry = toolEntry {
+            ToolCallLogRowView(entry: entry)
+        } else {
+            MessageBubbleView(
+                message: ChatMessage(
+                    role: message.role,
+                    content: message.content,
+                    timestamp: normalizedTimestamp,
+                    messageId: message.id,
+                    name: message.toolName
+                ),
+                transcriptMediaCacheNamespace: "craft"
+            )
         }
     }
-}
 
-private struct CraftStreamingMessage: View {
-    let text: String
+    private var normalizedTimestamp: Double? {
+        guard let value = message.timestamp else { return nil }
+        return value > 10_000_000_000 ? value / 1_000 : value
+    }
 
-    var body: some View {
-        HStack {
-            MarkdownRenderer(content: text, isStreaming: true)
-                .padding(12)
-                .background(Color.secondary.opacity(0.14))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            Spacer(minLength: 28)
-        }
+    private var toolEntry: ToolCallLogEntry? {
+        let result = message.toolResult ?? message.content
+        let call = ToolCall(
+            id: message.id,
+            name: message.toolName,
+            preview: result,
+            args: result.isEmpty ? nil : ["result": .string(result)],
+            isError: message.isError,
+            isCompleted: true,
+            startedAt: normalizedTimestamp ?? Date().timeIntervalSince1970
+        )
+        return ToolCallSummaryFormatter.entries(for: [call], isLive: false).first
     }
 }

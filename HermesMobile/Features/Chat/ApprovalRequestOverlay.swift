@@ -7,6 +7,7 @@ struct ApprovalRequestOverlay: View {
     let errorMessage: String?
     let onChoice: (ApprovalChoice) -> Void
     let onSkipAll: () -> Void
+    var showsSkipAll = true
 
     var body: some View {
         ZStack {
@@ -111,14 +112,16 @@ struct ApprovalRequestOverlay: View {
                 approvalButton("Deny", systemImage: "xmark.circle.fill", choice: .deny, prominent: false, role: .destructive)
             }
 
-            Button {
-                onSkipAll()
-            } label: {
-                Label("Skip all this session", systemImage: "bolt.slash")
-                    .frame(maxWidth: .infinity)
+            if showsSkipAll {
+                Button {
+                    onSkipAll()
+                } label: {
+                    Label("Skip all this session", systemImage: "bolt.slash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.chatDecision(.secondary))
+                .disabled(isResponding)
             }
-            .buttonStyle(.chatDecision(.secondary))
-            .disabled(isResponding)
         }
     }
 
