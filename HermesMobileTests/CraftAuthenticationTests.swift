@@ -207,6 +207,19 @@ final class CraftAuthenticationTests: XCTestCase {
         XCTAssertEqual(image.rpcObject["size"], .number(3))
     }
 
+    func testCraftSkillMapsIntoTheExistingHermexSkillModel() throws {
+        let skill = try JSONDecoder().decode(
+            CraftLoadedSkill.self,
+            from: Data(##"{"slug":"release","metadata":{"name":"Release","description":"Ship safely","requiredSources":["github"]},"content":"# Release","path":"/workspace/skills/release","source":"workspace","future":true}"##.utf8)
+        )
+
+        XCTAssertEqual(skill.summary.name, "Release")
+        XCTAssertEqual(skill.summary.category, "Workspace")
+        XCTAssertEqual(skill.summary.description, "Ship safely")
+        XCTAssertEqual(skill.summary.tags, ["github"])
+        XCTAssertNil(skill.summary.disabled)
+    }
+
     func testLiveCraftCoreWorkflowWhenConfigured() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let serverURLString = environment["HERMEX_CRAFT_TEST_URL"],
@@ -242,9 +255,16 @@ final class CraftAuthenticationTests: XCTestCase {
                 args: [.string(session.id), .object(["type": .string("setThinkingLevel"), "level": .string("medium")])]
             )
 
-            let acknowledgement: CraftSendAcknowledgement = try await client.request(
-                "sessions:sendMessage",
-                args: [.string(session.id), .string("Hermex simulator RPC smoke test")]
+            let acknowledgement = try await client.sendMessage(
+                sessionID: session.id,
+                text: "Hermex simulator RPC smoke test",
+                attachments: [
+                    CraftOutgoingAttachment(
+                        name: "hermex-live-smoke.txt",
+                        mimeType: "text/plain",
+                        data: Data("Craft attachment adapter verified".utf8)
+                    )
+                ]
             )
             XCTAssertTrue(acknowledgement.accepted)
             let loaded: CraftSession? = try await client.request(
@@ -252,6 +272,9 @@ final class CraftAuthenticationTests: XCTestCase {
                 args: [.string(session.id)]
             )
             XCTAssertTrue(loaded?.messages?.contains { $0.content == "Hermex simulator RPC smoke test" } == true)
+            XCTAssertTrue(loaded?.messages?.contains {
+                $0.attachments?.contains { $0.name == "hermex-live-smoke.txt" } == true
+            } == true)
 
             let _: JSONValue = try await client.request(
                 "sessions:setNotes",
@@ -260,6 +283,10 @@ final class CraftAuthenticationTests: XCTestCase {
             let notes: String = try await client.request("sessions:getNotes", args: [.string(session.id)])
             XCTAssertEqual(notes, "simulator verified")
             let _: [CraftSessionFile] = try await client.request("sessions:getFiles", args: [.string(session.id)])
+            let _: [CraftLoadedSkill] = try await client.request(
+                "skills:get",
+                args: [.string(workspace.id)]
+            )
             let _: [CraftLLMConnection] = try await client.request("LLM_Connection:listWithStatus")
             let _: [String] = try await client.request("tasks:list", args: [.string(workspace.id)])
             let _: JSONValue = try await client.request("sessions:cancel", args: [.string(session.id), .bool(true)])

@@ -1,6 +1,28 @@
 import Foundation
 import Observation
 
+protocol SkillsProviding: Sendable {
+    func loadSkills() async throws -> [SkillSummary]
+    func loadSkillContent(name: String, file: String?) async throws -> SkillDetailResponse
+    func setSkill(name: String, enabled: Bool) async throws
+}
+
+struct HermesSkillsProvider: SkillsProviding {
+    let client: APIClient
+
+    func loadSkills() async throws -> [SkillSummary] {
+        (try await client.skills()).skills ?? []
+    }
+
+    func loadSkillContent(name: String, file: String?) async throws -> SkillDetailResponse {
+        try await client.skillContent(name: name, file: file)
+    }
+
+    func setSkill(name: String, enabled: Bool) async throws {
+        _ = try await client.toggleSkill(name: name, enabled: enabled)
+    }
+}
+
 @MainActor
 @Observable
 final class SkillsViewModel {
@@ -10,14 +32,18 @@ final class SkillsViewModel {
     private(set) var lastError: Error?
     private(set) var togglingSkillNames: Set<String> = []
 
-    private let client: APIClient
+    let provider: any SkillsProviding
 
     init(server: URL) {
-        client = APIClient(baseURL: server)
+        provider = HermesSkillsProvider(client: APIClient(baseURL: server))
     }
 
     init(client: APIClient) {
-        self.client = client
+        provider = HermesSkillsProvider(client: client)
+    }
+
+    init(provider: any SkillsProviding) {
+        self.provider = provider
     }
 
     func load() async {
@@ -27,8 +53,7 @@ final class SkillsViewModel {
         defer { isLoading = false }
 
         do {
-            let response = try await client.skills()
-            skills = response.skills ?? []
+            skills = try await provider.loadSkills()
         } catch {
             lastError = error
             errorMessage = error.localizedDescription
@@ -66,7 +91,7 @@ final class SkillsViewModel {
         defer { togglingSkillNames.remove(name) }
 
         do {
-            _ = try await client.toggleSkill(name: name, enabled: enabled)
+            try await provider.setSkill(name: name, enabled: enabled)
             await load()
         } catch {
             updateSkill(named: name, disabled: enabled)

@@ -388,6 +388,7 @@ struct CraftHomeView: View {
     @State private var isShowingAddServer = false
     @State private var isShowingConnections = false
     @State private var isShowingTasks = false
+    @State private var isShowingSkills = false
     @State private var isCreatingWorkspace = false
     @State private var newlyCreatedSession: CraftSession?
     @State private var unavailableFeature: CraftUnavailableFeature?
@@ -428,6 +429,21 @@ struct CraftHomeView: View {
             .sheet(isPresented: $isShowingTasks) {
                 if let viewModel, let workspaceID = viewModel.selectedWorkspaceID {
                     CraftTasksView(client: viewModel.client, workspaceID: workspaceID)
+                }
+            }
+            .sheet(isPresented: $isShowingSkills) {
+                if let viewModel, let workspaceID = viewModel.selectedWorkspaceID {
+                    NavigationStack {
+                        SkillsView(
+                            provider: CraftSkillsProvider(client: viewModel.client, workspaceID: workspaceID),
+                            onAPIError: { viewModel.errorMessage = $0.localizedDescription }
+                        )
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { isShowingSkills = false }
+                            }
+                        }
+                    }
                 }
             }
             .sheet(item: $unavailableFeature) { feature in
@@ -618,7 +634,7 @@ struct CraftHomeView: View {
                 unavailableFeature = .kanban
             }
             SidebarNavButton(title: "Skills", assetImage: "LucideHammer") {
-                unavailableFeature = .skills
+                isShowingSkills = true
             }
             SidebarNavButton(title: "Memory", assetImage: "LucideBrain") {
                 unavailableFeature = .memory
@@ -714,14 +730,13 @@ struct CraftHomeView: View {
 }
 
 private enum CraftUnavailableFeature: String, Identifiable {
-    case kanban, skills, memory, usage, profiles
+    case kanban, memory, usage, profiles
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var systemImage: String {
         switch self {
         case .kanban: "rectangle.3.group"
-        case .skills: "hammer"
         case .memory: "brain"
         case .usage: "chart.bar"
         case .profiles: "person.crop.circle.badge.gearshape"

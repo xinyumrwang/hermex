@@ -235,6 +235,12 @@ struct SkillDetailResponse: Decodable, Equatable {
         case linkedFiles
     }
 
+    init(name: String?, content: String?, linkedFiles: [String]?) {
+        self.name = name
+        self.content = content
+        self.linkedFiles = linkedFiles
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decodeIfPresent(String.self, forKey: .name)

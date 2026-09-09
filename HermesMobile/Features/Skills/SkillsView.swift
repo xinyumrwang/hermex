@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SkillsView: View {
-    let server: URL
     let onAPIError: (Error) -> Void
 
     @State private var viewModel: SkillsViewModel
@@ -9,9 +8,13 @@ struct SkillsView: View {
     @State private var searchText = ""
 
     init(server: URL, onAPIError: @escaping (Error) -> Void) {
-        self.server = server
         self.onAPIError = onAPIError
         _viewModel = State(initialValue: SkillsViewModel(server: server))
+    }
+
+    init(provider: any SkillsProviding, onAPIError: @escaping (Error) -> Void) {
+        self.onAPIError = onAPIError
+        _viewModel = State(initialValue: SkillsViewModel(provider: provider))
     }
 
     var body: some View {
@@ -75,7 +78,7 @@ struct SkillsView: View {
                         SkillCategorySection(
                             category: group.category,
                             skills: group.skills,
-                            server: server,
+                            provider: viewModel.provider,
                             togglingSkillNames: viewModel.togglingSkillNames,
                             onToggleSkill: { skill, enabled in
                                 await toggle(skill: skill, enabled: enabled)
@@ -114,7 +117,7 @@ struct SkillsView: View {
 private struct SkillCategorySection: View {
     let category: String
     let skills: [SkillSummary]
-    let server: URL
+    let provider: any SkillsProviding
     let togglingSkillNames: Set<String>
     let onToggleSkill: (SkillSummary, Bool) async -> Void
     let onAPIError: (Error) -> Void
@@ -132,7 +135,7 @@ private struct SkillCategorySection: View {
                     NavigationLink {
                         SkillDetailView(
                             skill: skill,
-                            server: server,
+                            provider: provider,
                             onAPIError: onAPIError
                         )
                     } label: {
@@ -275,7 +278,7 @@ private struct SkillRow: View {
 
 struct SkillDetailView: View {
     let skill: SkillSummary
-    let server: URL
+    let provider: any SkillsProviding
     let onAPIError: (Error) -> Void
 
     @State private var detail: SkillDetailResponse?
@@ -366,7 +369,7 @@ struct SkillDetailView: View {
         defer { isLoading = false }
 
         do {
-            let response = try await APIClient(baseURL: server).skillContent(name: name)
+            let response = try await provider.loadSkillContent(name: name, file: nil)
             detail = response
         } catch {
             errorMessage = error.localizedDescription
@@ -381,7 +384,7 @@ struct SkillDetailView: View {
         defer { isLoadingFile = false }
 
         do {
-            let response = try await APIClient(baseURL: server).skillContent(name: name, file: fileName)
+            let response = try await provider.loadSkillContent(name: name, file: fileName)
             fileContent = response.content
         } catch {
             fileContent = String(localized: "Could not load file: \(error.localizedDescription)")

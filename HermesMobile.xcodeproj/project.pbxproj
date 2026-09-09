@@ -15,6 +15,7 @@
 		C44900000000000000000006 /* CraftSessionInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000016 /* CraftSessionInspectorView.swift */; };
 		C44900000000000000000007 /* CraftTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000017 /* CraftTasksView.swift */; };
 		C44900000000000000000008 /* CraftAttachmentAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000018 /* CraftAttachmentAdapter.swift */; };
+		C44900000000000000000009 /* CraftSkillsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44900000000000000000019 /* CraftSkillsAdapter.swift */; };
 		05814DEA5DE4690F730B1E15 /* InsightsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931EC010A2D940B0E42287A4 /* InsightsViewModel.swift */; };
 		26AB000000000000000000B1 /* ProvidersViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F1 /* ProvidersViewModel.swift */; };
 		26AB000000000000000000B2 /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F2 /* ProvidersView.swift */; };
@@ -476,6 +477,7 @@
 		C44900000000000000000012 /* CraftAuthenticationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftAuthenticationTests.swift; sourceTree = "<group>"; };
 		C44900000000000000000013 /* CraftRPCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftRPCClient.swift; sourceTree = "<group>"; };
 		C44900000000000000000018 /* CraftAttachmentAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftAttachmentAdapter.swift; sourceTree = "<group>"; };
+		C44900000000000000000019 /* CraftSkillsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftSkillsAdapter.swift; sourceTree = "<group>"; };
 		C44900000000000000000014 /* CraftSessionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftSessionViews.swift; sourceTree = "<group>"; };
 		C44900000000000000000015 /* CraftConnectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftConnectionSettingsView.swift; sourceTree = "<group>"; };
 		C44900000000000000000016 /* CraftSessionInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CraftSessionInspectorView.swift; sourceTree = "<group>"; };
@@ -1145,6 +1147,7 @@
 				C44900000000000000000011 /* CraftAuthenticationClient.swift */,
 				C44900000000000000000013 /* CraftRPCClient.swift */,
 				C44900000000000000000018 /* CraftAttachmentAdapter.swift */,
+				C44900000000000000000019 /* CraftSkillsAdapter.swift */,
 				1A2B3C4D5E6F7000000000B2 /* APIClient.swift */,
 				C04000000000000000000011 /* APIClient+Sessions.swift */,
 				C04000000000000000000012 /* APIClient+Projects.swift */,
@@ -1793,6 +1796,7 @@
 				C44900000000000000000001 /* CraftAuthenticationClient.swift in Sources */,
 				C44900000000000000000003 /* CraftRPCClient.swift in Sources */,
 				C44900000000000000000008 /* CraftAttachmentAdapter.swift in Sources */,
+				C44900000000000000000009 /* CraftSkillsAdapter.swift in Sources */,
 				C44900000000000000000004 /* CraftSessionViews.swift in Sources */,
 				C44900000000000000000005 /* CraftConnectionSettingsView.swift in Sources */,
 				C44900000000000000000006 /* CraftSessionInspectorView.swift in Sources */,
