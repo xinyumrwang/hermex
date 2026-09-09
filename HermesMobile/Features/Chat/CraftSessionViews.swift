@@ -113,14 +113,15 @@ final class CraftHomeViewModel {
         }
     }
 
-    func createSession() async {
+    @discardableResult
+    func createSession() async -> CraftSession? {
         guard canCreateSession else {
             errorMessage = CraftRPCError.channelUnavailable("sessions:create").localizedDescription
-            return
+            return nil
         }
         guard let workspace = selectedWorkspace else {
             errorMessage = "Create or select a workspace first."
-            return
+            return nil
         }
         do {
             let session: CraftSession = try await client.request(
@@ -129,8 +130,10 @@ final class CraftHomeViewModel {
             )
             sessions.insert(session, at: 0)
             errorMessage = nil
+            return session
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -386,6 +389,7 @@ struct CraftHomeView: View {
     @State private var isShowingConnections = false
     @State private var isShowingTasks = false
     @State private var isCreatingWorkspace = false
+    @State private var newlyCreatedSession: CraftSession?
     @State private var unavailableFeature: CraftUnavailableFeature?
     @State private var searchText = ""
     @State private var isSearching = false
@@ -405,6 +409,14 @@ struct CraftHomeView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(isPresented: Binding(
+                get: { newlyCreatedSession != nil },
+                set: { if !$0 { newlyCreatedSession = nil } }
+            )) {
+                if let session = newlyCreatedSession, let viewModel {
+                    CraftChatView(client: viewModel.client, session: session)
+                }
+            }
             .sheet(isPresented: $isShowingAddServer) {
                 AddServerView(authManager: authManager)
             }
@@ -548,10 +560,15 @@ struct CraftHomeView: View {
                 .clipped()
 
             HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 22, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .onTapGesture { isSearching = true }
+                Button {
+                    isSearching = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 22, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search sessions")
 
                 if isSearching {
                     TextField("Search sessions", text: $searchText)
@@ -650,7 +667,7 @@ struct CraftHomeView: View {
 
     private func newSessionButton(_ model: CraftHomeViewModel) -> some View {
         Button {
-            Task { await model.createSession() }
+            Task { newlyCreatedSession = await model.createSession() }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "square.and.pencil").font(.title3.weight(.semibold))
@@ -770,9 +787,13 @@ struct CraftChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Conversation settings", systemImage: "slider.horizontal.3") {
+                Button {
                     isShowingInspector = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
                 }
+                .accessibilityLabel("Conversation settings")
+                .accessibilityIdentifier("craft-conversation-settings")
             }
         }
         .task { await viewModel.start() }
