@@ -58,10 +58,106 @@ struct CraftMessage: Codable, Identifiable, Equatable, Sendable {
     var content: String
     var timestamp: Double?
     var toolName: String?
+    var toolUseId: String?
+    var toolInput: [String: JSONValue]?
     var toolResult: String?
+    var toolStatus: String?
+    var toolDuration: Double?
+    var toolIntent: String?
+    var toolDisplayName: String?
+    var parentToolUseId: String?
+    var attachments: [CraftStoredAttachment]?
     var isError: Bool?
     var isIntermediate: Bool?
     var hidden: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, type, content, timestamp, toolName, toolUseId, toolInput
+        case toolResult, toolStatus, toolDuration, toolIntent, toolDisplayName
+        case parentToolUseId, attachments, isError, isIntermediate, hidden
+    }
+
+    init(
+        id: String,
+        role: String,
+        content: String,
+        timestamp: Double? = nil,
+        toolName: String? = nil,
+        toolUseId: String? = nil,
+        toolInput: [String: JSONValue]? = nil,
+        toolResult: String? = nil,
+        toolStatus: String? = nil,
+        toolDuration: Double? = nil,
+        toolIntent: String? = nil,
+        toolDisplayName: String? = nil,
+        parentToolUseId: String? = nil,
+        attachments: [CraftStoredAttachment]? = nil,
+        isError: Bool? = nil,
+        isIntermediate: Bool? = nil,
+        hidden: Bool? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+        self.toolName = toolName
+        self.toolUseId = toolUseId
+        self.toolInput = toolInput
+        self.toolResult = toolResult
+        self.toolStatus = toolStatus
+        self.toolDuration = toolDuration
+        self.toolIntent = toolIntent
+        self.toolDisplayName = toolDisplayName
+        self.parentToolUseId = parentToolUseId
+        self.attachments = attachments
+        self.isError = isError
+        self.isIntermediate = isIntermediate
+        self.hidden = hidden
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.decodeLossyStringIfPresent(forKey: .id) ?? "craft-\(UUID().uuidString)"
+        role = container.decodeLossyStringIfPresent(forKey: .role)
+            ?? container.decodeLossyStringIfPresent(forKey: .type)
+            ?? "unknown"
+        content = container.decodeLossyStringIfPresent(forKey: .content) ?? ""
+        timestamp = container.decodeLossyDoubleIfPresent(forKey: .timestamp)
+        toolName = container.decodeLossyStringIfPresent(forKey: .toolName)
+        toolUseId = container.decodeLossyStringIfPresent(forKey: .toolUseId)
+        toolInput = try? container.decodeIfPresent([String: JSONValue].self, forKey: .toolInput)
+        toolResult = container.decodeLossyStringIfPresent(forKey: .toolResult)
+        toolStatus = container.decodeLossyStringIfPresent(forKey: .toolStatus)
+        toolDuration = container.decodeLossyDoubleIfPresent(forKey: .toolDuration)
+        toolIntent = container.decodeLossyStringIfPresent(forKey: .toolIntent)
+        toolDisplayName = container.decodeLossyStringIfPresent(forKey: .toolDisplayName)
+        parentToolUseId = container.decodeLossyStringIfPresent(forKey: .parentToolUseId)
+        attachments = try? container.decodeIfPresent([CraftStoredAttachment].self, forKey: .attachments)
+        isError = container.decodeLossyBoolIfPresent(forKey: .isError)
+        isIntermediate = container.decodeLossyBoolIfPresent(forKey: .isIntermediate)
+        hidden = container.decodeLossyBoolIfPresent(forKey: .hidden)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        try container.encodeIfPresent(timestamp, forKey: .timestamp)
+        try container.encodeIfPresent(toolName, forKey: .toolName)
+        try container.encodeIfPresent(toolUseId, forKey: .toolUseId)
+        try container.encodeIfPresent(toolInput, forKey: .toolInput)
+        try container.encodeIfPresent(toolResult, forKey: .toolResult)
+        try container.encodeIfPresent(toolStatus, forKey: .toolStatus)
+        try container.encodeIfPresent(toolDuration, forKey: .toolDuration)
+        try container.encodeIfPresent(toolIntent, forKey: .toolIntent)
+        try container.encodeIfPresent(toolDisplayName, forKey: .toolDisplayName)
+        try container.encodeIfPresent(parentToolUseId, forKey: .parentToolUseId)
+        try container.encodeIfPresent(attachments, forKey: .attachments)
+        try container.encodeIfPresent(isError, forKey: .isError)
+        try container.encodeIfPresent(isIntermediate, forKey: .isIntermediate)
+        try container.encodeIfPresent(hidden, forKey: .hidden)
+    }
 }
 
 struct CraftSendAcknowledgement: Codable, Equatable, Sendable {
@@ -339,6 +435,44 @@ actor CraftRPCClient {
         let value = try await waitForResponse(to: envelope)
         let data = try JSONEncoder().encode(value)
         return try JSONDecoder().decode(Result.self, from: data)
+    }
+
+    func sendMessage(
+        sessionID: String,
+        text: String,
+        attachments: [CraftOutgoingAttachment] = []
+    ) async throws -> CraftSendAcknowledgement {
+        var processed: [JSONValue] = []
+        var stored: [JSONValue] = []
+        processed.reserveCapacity(attachments.count)
+        stored.reserveCapacity(attachments.count)
+
+        for attachment in attachments {
+            let storedAttachment: CraftStoredAttachment = try await request(
+                "file:storeAttachment",
+                args: [.string(sessionID), attachment.rpcValue]
+            )
+            var processedAttachment = attachment.rpcObject
+            processedAttachment["storedPath"] = .string(storedAttachment.storedPath)
+            if let markdownPath = storedAttachment.markdownPath {
+                processedAttachment["markdownPath"] = .string(markdownPath)
+            }
+            if let resizedBase64 = storedAttachment.resizedBase64 {
+                processedAttachment["base64"] = .string(resizedBase64)
+            }
+            processed.append(.object(processedAttachment))
+            stored.append(storedAttachment.rpcValue)
+        }
+
+        return try await request(
+            "sessions:sendMessage",
+            args: [
+                .string(sessionID),
+                .string(text),
+                .array(processed),
+                .array(stored),
+            ]
+        )
     }
 
     private func waitForResponse(to envelope: CraftWireEnvelope) async throws -> JSONValue {

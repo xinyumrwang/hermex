@@ -135,6 +135,78 @@ final class CraftAuthenticationTests: XCTestCase {
         XCTAssertTrue(connection.isAuthenticated)
     }
 
+    func testCraftMessageAdaptsRichTranscriptDataWithoutChangingPresentationModels() throws {
+        let message = try JSONDecoder().decode(
+            CraftMessage.self,
+            from: Data(#"""
+            {
+                "id":"m1",
+                "type":"tool",
+                "content":"tool output",
+                "timestamp":1000,
+                "toolName":"bash",
+                "toolUseId":"tool-1",
+                "toolInput":{"command":"git status"},
+                "toolResult":"clean",
+                "toolStatus":"completed",
+                "toolDuration":1500,
+                "toolIntent":"Inspect the repository",
+                "toolDisplayName":"Shell",
+                "attachments":[{
+                    "id":"a1",
+                    "type":"image",
+                    "name":"screen.png",
+                    "mimeType":"image/png",
+                    "size":42,
+                    "storedPath":"/workspace/.craft/attachments/screen.png",
+                    "thumbnailBase64":"dGh1bWI="
+                }],
+                "future":"ignored"
+            }
+            """#.utf8)
+        )
+
+        XCTAssertEqual(message.role, "tool")
+        XCTAssertEqual(message.toolUseId, "tool-1")
+        XCTAssertEqual(message.toolInput?["command"], .string("git status"))
+        XCTAssertEqual(message.toolDuration, 1500)
+        XCTAssertEqual(message.attachments?.first?.messageAttachment.name, "screen.png")
+        XCTAssertEqual(message.attachments?.first?.messageAttachment.mime, "image/png")
+        XCTAssertEqual(message.attachments?.first?.messageAttachment.isImage, true)
+    }
+
+    func testCraftMessageToleratesMissingAndLossyCoreFields() throws {
+        let message = try JSONDecoder().decode(
+            CraftMessage.self,
+            from: Data(#"{"id":7,"role":false,"content":99,"timestamp":"1234"}"#.utf8)
+        )
+
+        XCTAssertEqual(message.id, "7")
+        XCTAssertEqual(message.role, "false")
+        XCTAssertEqual(message.content, "99")
+        XCTAssertEqual(message.timestamp, 1234)
+    }
+
+    func testCraftOutgoingAttachmentBuildsTheVerifiedRPCShape() throws {
+        let text = CraftOutgoingAttachment(
+            name: "notes.md",
+            mimeType: "text/markdown",
+            data: Data("hello".utf8)
+        )
+        let image = CraftOutgoingAttachment(
+            name: "screen.png",
+            mimeType: "image/png",
+            data: Data([0, 1, 2])
+        )
+
+        XCTAssertEqual(text.type, "text")
+        XCTAssertEqual(text.rpcObject["text"], .string("hello"))
+        XCTAssertNil(text.rpcObject["base64"])
+        XCTAssertEqual(image.type, "image")
+        XCTAssertEqual(image.rpcObject["base64"], .string("AAEC"))
+        XCTAssertEqual(image.rpcObject["size"], .number(3))
+    }
+
     func testLiveCraftCoreWorkflowWhenConfigured() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let serverURLString = environment["HERMEX_CRAFT_TEST_URL"],

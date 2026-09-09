@@ -247,9 +247,9 @@ final class CraftChatViewModel {
         )
 
         do {
-            let _: CraftSendAcknowledgement = try await client.request(
-                "sessions:sendMessage",
-                args: [.string(sessionID), .string(text)]
+            let _: CraftSendAcknowledgement = try await client.sendMessage(
+                sessionID: sessionID,
+                text: text
             )
             await reloadPersistedMessagesWithoutChangingProcessing()
         } catch {
@@ -919,7 +919,9 @@ private struct CraftTranscriptRow: View {
                     content: message.content,
                     timestamp: normalizedTimestamp,
                     messageId: message.id,
-                    name: message.toolName
+                    name: message.toolDisplayName ?? message.toolName,
+                    toolUseId: message.toolUseId,
+                    attachments: message.attachments?.map(\.messageAttachment)
                 ),
                 transcriptMediaCacheNamespace: "craft"
             )
@@ -933,13 +935,17 @@ private struct CraftTranscriptRow: View {
 
     private var toolEntry: ToolCallLogEntry? {
         let result = message.toolResult ?? message.content
+        let normalizedStatus = message.toolStatus?.lowercased()
+        let completedStatuses = ["completed", "complete", "success", "error", "failed", "cancelled", "canceled", "interrupted"]
+        let isError = message.isError == true || ["error", "failed"].contains(normalizedStatus)
         let call = ToolCall(
-            id: message.id,
-            name: message.toolName,
-            preview: result,
-            args: result.isEmpty ? nil : ["result": .string(result)],
-            isError: message.isError,
-            isCompleted: true,
+            id: message.toolUseId ?? message.id,
+            name: message.toolDisplayName ?? message.toolName,
+            preview: message.toolIntent ?? result,
+            args: message.toolInput ?? (result.isEmpty ? nil : ["result": .string(result)]),
+            duration: message.toolDuration.map { $0 / 1_000 },
+            isError: isError,
+            isCompleted: normalizedStatus.map { completedStatuses.contains($0) } ?? true,
             startedAt: normalizedTimestamp ?? Date().timeIntervalSince1970
         )
         return ToolCallSummaryFormatter.entries(for: [call], isLive: false).first
