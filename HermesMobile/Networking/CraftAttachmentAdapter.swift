@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 struct CraftStoredAttachment: Codable, Equatable, Sendable {
     let id: String
@@ -44,11 +45,62 @@ struct CraftStoredAttachment: Codable, Equatable, Sendable {
 }
 
 struct CraftOutgoingAttachment: Equatable, Sendable {
+    let id: UUID
     let name: String
     let mimeType: String
     let data: Data
+    let thumbnailData: Data?
+
+    init(
+        name: String,
+        mimeType: String,
+        data: Data,
+        id: UUID = UUID(),
+        thumbnailData: Data? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.data = data
+        self.thumbnailData = thumbnailData
+    }
+
+    init(sharedImport: SharedAttachmentImport, id: UUID = UUID()) {
+        let inferredType = sharedImport.typeIdentifier.flatMap(UTType.init)
+        let mimeType = inferredType?.preferredMIMEType ?? "application/octet-stream"
+        let isImage = Self.attachmentType(name: sharedImport.filename, mimeType: mimeType) == "image"
+        self.init(
+            name: sharedImport.filename,
+            mimeType: mimeType,
+            data: sharedImport.data,
+            id: id,
+            thumbnailData: isImage
+                ? ImagePreviewDownsampler.previewData(
+                    from: sharedImport.data,
+                    maxPixelSize: ImagePreviewDownsampler.attachmentMaxPixelSize
+                )
+                : nil
+        )
+    }
+
+    var pendingAttachment: PendingAttachment {
+        let isImage = type == "image"
+        return PendingAttachment(
+            id: id,
+            name: name,
+            path: "",
+            mime: mimeType,
+            size: data.count,
+            isImage: isImage,
+            thumbnailData: thumbnailData
+        )
+    }
 
     var type: String {
+        Self.attachmentType(name: name, mimeType: mimeType)
+    }
+
+    private static func attachmentType(name: String, mimeType: String) -> String {
         let mime = mimeType.lowercased()
         let extensionName = URL(fileURLWithPath: name).pathExtension.lowercased()
         if mime.hasPrefix("image/") { return "image" }

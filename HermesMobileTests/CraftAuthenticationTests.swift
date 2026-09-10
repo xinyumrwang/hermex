@@ -207,6 +207,46 @@ final class CraftAuthenticationTests: XCTestCase {
         XCTAssertEqual(image.rpcObject["size"], .number(3))
     }
 
+    func testSharedImportMapsIntoCraftAttachmentAndExistingComposerModel() throws {
+        let imported = SharedAttachmentImport(
+            filename: "brief.md",
+            typeIdentifier: "net.daringfireball.markdown",
+            data: Data("# Brief".utf8)
+        )
+
+        let attachment = CraftOutgoingAttachment(sharedImport: imported)
+        let pending = attachment.pendingAttachment
+
+        XCTAssertEqual(attachment.name, "brief.md")
+        XCTAssertTrue(attachment.mimeType.hasPrefix("text/"))
+        XCTAssertEqual(attachment.type, "text")
+        XCTAssertEqual(attachment.rpcObject["text"], .string("# Brief"))
+        XCTAssertEqual(pending.id, attachment.id)
+        XCTAssertEqual(pending.name, "brief.md")
+        XCTAssertEqual(pending.size, 7)
+        XCTAssertFalse(pending.isImage)
+    }
+
+    func testLocalCraftTextAttachmentUsesExistingPreviewModel() async throws {
+        let attachment = CraftOutgoingAttachment(
+            name: "notes.txt",
+            mimeType: "text/plain",
+            data: Data("first\nsecond".utf8)
+        )
+        let viewModel = ChatAttachmentPreviewViewModel(
+            local: ChatAttachmentPreviewItem(craft: attachment)
+        )
+
+        await viewModel.load()
+
+        guard case .text(let preview) = try XCTUnwrap(viewModel.preview) else {
+            return XCTFail("Expected a local text preview")
+        }
+        XCTAssertEqual(preview.content, "first\nsecond")
+        XCTAssertEqual(preview.name, "notes.txt")
+        XCTAssertEqual(preview.lines, 2)
+    }
+
     func testCraftSkillMapsIntoTheExistingHermexSkillModel() throws {
         let skill = try JSONDecoder().decode(
             CraftLoadedSkill.self,

@@ -153,6 +153,29 @@ final class CraftHomeViewModel {
         }
     }
 
+    func session(withID sessionID: String) async -> CraftSession? {
+        do {
+            guard let loaded: CraftSession = try await client.request(
+                "sessions:getMessages",
+                args: [.string(sessionID)]
+            ) else {
+                errorMessage = "This Craft conversation no longer exists."
+                return nil
+            }
+
+            if let workspaceID = loaded.workspaceId,
+               workspaceID != selectedWorkspaceID,
+               let workspace = workspaces.first(where: { $0.id == workspaceID }) {
+                try await selectWorkspace(workspace)
+            }
+            errorMessage = nil
+            return sessions.first(where: { $0.id == sessionID }) ?? loaded
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     private func refreshCapabilities() async {
         canCreateWorkspace = await client.supports("server:createWorkspace")
         canCreateSession = await client.supports("sessions:create")
@@ -174,16 +197,36 @@ final class CraftChatViewModel {
     private(set) var canCancel = false
     private(set) var pendingPermission: CraftPermissionRequest?
     private(set) var isRespondingToPermission = false
+    private(set) var outgoingAttachments: [CraftOutgoingAttachment]
     var draft = ""
     var errorMessage: String?
 
     private var eventTask: Task<Void, Never>?
 
-    init(client: CraftRPCClient, session: CraftSession) {
+    init(
+        client: CraftRPCClient,
+        session: CraftSession,
+        initialDraft: String = "",
+        initialAttachments: [SharedAttachmentImport] = []
+    ) {
         self.client = client
         self.sessionID = session.id
         self.session = session
         self.messages = session.messages?.filter { $0.hidden != true } ?? []
+        self.draft = initialDraft
+        self.outgoingAttachments = initialAttachments.map { CraftOutgoingAttachment(sharedImport: $0) }
+    }
+
+    var pendingAttachments: [PendingAttachment] {
+        outgoingAttachments.map(\.pendingAttachment)
+    }
+
+    func outgoingAttachment(withID id: UUID) -> CraftOutgoingAttachment? {
+        outgoingAttachments.first { $0.id == id }
+    }
+
+    func removeOutgoingAttachment(id: UUID) {
+        outgoingAttachments.removeAll { $0.id == id }
     }
 
     func start() async {
@@ -231,9 +274,11 @@ final class CraftChatViewModel {
             return
         }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let attachments = outgoingAttachments
+        guard !text.isEmpty || !attachments.isEmpty else { return }
 
         draft = ""
+        outgoingAttachments = []
         errorMessage = nil
         isSending = true
         streamingText = ""
@@ -249,11 +294,14 @@ final class CraftChatViewModel {
         do {
             let _: CraftSendAcknowledgement = try await client.sendMessage(
                 sessionID: sessionID,
-                text: text
+                text: text,
+                attachments: attachments
             )
             await reloadPersistedMessagesWithoutChangingProcessing()
         } catch {
             isSending = false
+            draft = text
+            outgoingAttachments = attachments
             errorMessage = error.localizedDescription
         }
     }
@@ -382,6 +430,12 @@ final class CraftChatViewModel {
 struct CraftHomeView: View {
     @Bindable var authManager: AuthManager
     let server: URL
+    @Binding var pendingSharedImport: SharedImportReservation?
+    let didRoutePendingSharedImport: (SharedImportReservation) -> Void
+    let hasWaitingSharedImport: Bool
+    let openNextSharedImport: () -> Void
+    @Binding var pendingDeepLinkedSessionID: String?
+    @Binding var requestedNewChat: NewChatRequest?
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(HeaderLogoColor.storageKey) private var headerLogoColorHex = HeaderLogoColor.defaultHex
     @State private var viewModel: CraftHomeViewModel?
@@ -390,7 +444,8 @@ struct CraftHomeView: View {
     @State private var isShowingTasks = false
     @State private var isShowingSkills = false
     @State private var isCreatingWorkspace = false
-    @State private var newlyCreatedSession: CraftSession?
+    @State private var activeChatRoute: CraftChatRoute?
+    @State private var isRoutingPendingRequest = false
     @State private var unavailableFeature: CraftUnavailableFeature?
     @State private var searchText = ""
     @State private var isSearching = false
@@ -410,12 +465,14 @@ struct CraftHomeView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(isPresented: Binding(
-                get: { newlyCreatedSession != nil },
-                set: { if !$0 { newlyCreatedSession = nil } }
-            )) {
-                if let session = newlyCreatedSession, let viewModel {
-                    CraftChatView(client: viewModel.client, session: session)
+            .navigationDestination(item: $activeChatRoute) { route in
+                if let viewModel {
+                    CraftChatView(
+                        client: viewModel.client,
+                        session: route.session,
+                        initialDraft: route.initialDraft,
+                        initialAttachments: route.initialAttachments
+                    )
                 }
             }
             .sheet(isPresented: $isShowingAddServer) {
@@ -479,10 +536,35 @@ struct CraftHomeView: View {
                 let model = CraftHomeViewModel(client: CraftRPCClient(serverURL: server, token: token))
                 viewModel = model
                 await model.start()
+                await routePendingRequest(using: model)
+            }
+            .onChange(of: pendingSharedImport) {
+                guard let viewModel else { return }
+                Task { await routePendingRequest(using: viewModel) }
+            }
+            .onChange(of: pendingDeepLinkedSessionID) {
+                guard let viewModel else { return }
+                Task { await routePendingRequest(using: viewModel) }
+            }
+            .onChange(of: requestedNewChat) {
+                guard let viewModel else { return }
+                Task { await routePendingRequest(using: viewModel) }
+            }
+            .onChange(of: activeChatRoute == nil) { _, isDismissed in
+                guard isDismissed else { return }
+                if hasWaitingSharedImport {
+                    openNextSharedImport()
+                } else if let viewModel {
+                    Task { await routePendingRequest(using: viewModel) }
+                }
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 guard oldPhase != .active, newPhase == .active else { return }
-                Task { await viewModel?.recoverAfterForeground() }
+                Task {
+                    guard let viewModel else { return }
+                    await viewModel.recoverAfterForeground()
+                    await routePendingRequest(using: viewModel)
+                }
             }
         }
     }
@@ -683,7 +765,10 @@ struct CraftHomeView: View {
 
     private func newSessionButton(_ model: CraftHomeViewModel) -> some View {
         Button {
-            Task { newlyCreatedSession = await model.createSession() }
+            Task {
+                guard let session = await model.createSession() else { return }
+                activeChatRoute = CraftChatRoute(session: session)
+            }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "square.and.pencil").font(.title3.weight(.semibold))
@@ -697,6 +782,41 @@ struct CraftHomeView: View {
         }
         .buttonStyle(SessionListFloatingChatButtonStyle())
         .disabled(model.selectedWorkspace == nil || !model.canCreateSession)
+    }
+
+    private func routePendingRequest(using model: CraftHomeViewModel) async {
+        guard activeChatRoute == nil, !model.isLoading, !isRoutingPendingRequest else { return }
+        isRoutingPendingRequest = true
+        defer { isRoutingPendingRequest = false }
+
+        if let reservation = pendingSharedImport {
+            let sharedImport = reservation.sharedImport
+            guard !sharedImport.isEmpty else {
+                didRoutePendingSharedImport(reservation)
+                return
+            }
+            guard let session = await model.createSession() else { return }
+            activeChatRoute = CraftChatRoute(
+                session: session,
+                initialDraft: HermesShareDraft.composerDraft(from: sharedImport.draft),
+                initialAttachments: sharedImport.attachments
+            )
+            didRoutePendingSharedImport(reservation)
+            return
+        }
+
+        if let sessionID = pendingDeepLinkedSessionID {
+            guard let session = await model.session(withID: sessionID) else { return }
+            pendingDeepLinkedSessionID = nil
+            activeChatRoute = CraftChatRoute(session: session)
+            return
+        }
+
+        if requestedNewChat != nil {
+            guard let session = await model.createSession() else { return }
+            requestedNewChat = nil
+            activeChatRoute = CraftChatRoute(session: session)
+        }
     }
 
     private func filteredSessions(_ model: CraftHomeViewModel) -> [CraftSession] {
@@ -729,6 +849,21 @@ struct CraftHomeView: View {
     }
 }
 
+private struct CraftChatRoute: Identifiable, Hashable {
+    let id = UUID()
+    let session: CraftSession
+    var initialDraft = ""
+    var initialAttachments: [SharedAttachmentImport] = []
+
+    static func == (lhs: CraftChatRoute, rhs: CraftChatRoute) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
 private enum CraftUnavailableFeature: String, Identifiable {
     case kanban, memory, usage, profiles
 
@@ -748,10 +883,21 @@ struct CraftChatView: View {
     @State private var viewModel: CraftChatViewModel
     @FocusState private var composerFocused: Bool
     @State private var isShowingInspector = false
+    @State private var attachmentPreviewItem: ChatAttachmentPreviewItem?
     @AppStorage(HeaderLogoColor.storageKey) private var headerLogoColorHex = HeaderLogoColor.defaultHex
 
-    init(client: CraftRPCClient, session: CraftSession) {
-        _viewModel = State(initialValue: CraftChatViewModel(client: client, session: session))
+    init(
+        client: CraftRPCClient,
+        session: CraftSession,
+        initialDraft: String = "",
+        initialAttachments: [SharedAttachmentImport] = []
+    ) {
+        _viewModel = State(initialValue: CraftChatViewModel(
+            client: client,
+            session: session,
+            initialDraft: initialDraft,
+            initialAttachments: initialAttachments
+        ))
     }
 
     var body: some View {
@@ -816,6 +962,9 @@ struct CraftChatView: View {
         .sheet(isPresented: $isShowingInspector) {
             CraftSessionInspectorView(client: viewModel.client, session: viewModel.session)
         }
+        .sheet(item: $attachmentPreviewItem) { item in
+            ChatAttachmentPreviewView(local: item)
+        }
         .overlay {
             if let prompt = permissionPrompt {
                 ApprovalRequestOverlay(
@@ -840,31 +989,42 @@ struct CraftChatView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message Craft", text: $viewModel.draft, axis: .vertical)
-                .lineLimit(1...8)
-                .padding(.leading, 16)
-                .padding(.vertical, 12)
-                .focused($composerFocused)
-                .onSubmit { Task { await viewModel.send() } }
-
-            Button {
-                if viewModel.isSending, trimmedDraft.isEmpty {
-                    Task { await viewModel.cancel() }
-                } else {
-                    Task { await viewModel.send() }
+        VStack(spacing: 0) {
+            ComposerAttachmentStripView(
+                attachments: viewModel.pendingAttachments,
+                onRemove: viewModel.removeOutgoingAttachment,
+                onPreview: { attachment in
+                    guard let outgoing = viewModel.outgoingAttachment(withID: attachment.id) else { return }
+                    attachmentPreviewItem = ChatAttachmentPreviewItem(craft: outgoing)
                 }
-            } label: {
-                Image(systemName: viewModel.isSending && trimmedDraft.isEmpty ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .background(actionButtonColor, in: Circle())
-                    .foregroundStyle(actionButtonForeground)
+            )
+
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message Craft", text: $viewModel.draft, axis: .vertical)
+                    .lineLimit(1...8)
+                    .padding(.leading, 16)
+                    .padding(.vertical, 12)
+                    .focused($composerFocused)
+                    .onSubmit { Task { await viewModel.send() } }
+
+                Button {
+                    if viewModel.isSending, !hasSendContent {
+                        Task { await viewModel.cancel() }
+                    } else {
+                        Task { await viewModel.send() }
+                    }
+                } label: {
+                    Image(systemName: viewModel.isSending && !hasSendContent ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .background(actionButtonColor, in: Circle())
+                        .foregroundStyle(actionButtonForeground)
+                }
+                .buttonStyle(.chatTactile(.icon))
+                .padding(5)
+                .disabled(actionButtonDisabled)
+                .accessibilityLabel(viewModel.isSending && !hasSendContent ? "Stop response" : "Send")
             }
-            .buttonStyle(.chatTactile(.icon))
-            .padding(5)
-            .disabled(actionButtonDisabled)
-            .accessibilityLabel(viewModel.isSending && trimmedDraft.isEmpty ? "Stop response" : "Send")
         }
         .adaptiveGlass(
             .regular,
@@ -881,8 +1041,12 @@ struct CraftChatView: View {
     }
 
     private var actionButtonDisabled: Bool {
-        if viewModel.isSending, trimmedDraft.isEmpty { return !viewModel.canCancel }
-        return !viewModel.canSend || trimmedDraft.isEmpty
+        if viewModel.isSending, !hasSendContent { return !viewModel.canCancel }
+        return !viewModel.canSend || !hasSendContent
+    }
+
+    private var hasSendContent: Bool {
+        !trimmedDraft.isEmpty || !viewModel.pendingAttachments.isEmpty
     }
 
     private var actionButtonColor: Color {

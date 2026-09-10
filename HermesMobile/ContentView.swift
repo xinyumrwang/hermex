@@ -62,7 +62,16 @@ struct ContentView: View {
             OnboardingView(authManager: authManager, savedServer: server)
         case .loggedIn(let server):
             if authManager.activeServerKind == .craft {
-                CraftHomeView(authManager: authManager, server: server)
+                CraftHomeView(
+                    authManager: authManager,
+                    server: server,
+                    pendingSharedImport: $pendingSharedImport,
+                    didRoutePendingSharedImport: consumePendingSharedImport,
+                    hasWaitingSharedImport: hasWaitingSharedImport,
+                    openNextSharedImport: openNextSharedImport,
+                    pendingDeepLinkedSessionID: $pendingDeepLinkedSessionID,
+                    requestedNewChat: $pendingNewChatRequest
+                )
                     .id(server)
             } else {
                 SessionListView(

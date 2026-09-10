@@ -8,7 +8,7 @@ struct ChatAttachmentPreviewItem: Identifiable, Equatable {
     let mime: String?
     let size: Int?
     let isImage: Bool?
-    let localImageData: Data?
+    let localData: Data?
 
     init(message attachment: MessageAttachment, localData: Data?) {
         name = attachment.name
@@ -16,7 +16,7 @@ struct ChatAttachmentPreviewItem: Identifiable, Equatable {
         mime = attachment.mime
         size = attachment.size
         isImage = attachment.isImage
-        localImageData = localData
+        self.localData = localData
     }
 
     init(pending attachment: PendingAttachment) {
@@ -25,7 +25,16 @@ struct ChatAttachmentPreviewItem: Identifiable, Equatable {
         mime = attachment.mime
         size = attachment.size
         isImage = attachment.isImage
-        localImageData = attachment.thumbnailData
+        localData = attachment.thumbnailData
+    }
+
+    init(craft attachment: CraftOutgoingAttachment) {
+        name = attachment.name
+        path = nil
+        mime = attachment.mimeType
+        size = attachment.data.count
+        isImage = attachment.type == "image"
+        localData = attachment.data
     }
 
     var displayName: String {
@@ -97,6 +106,12 @@ struct ChatAttachmentPreviewView: View {
         self.item = item
         self.onAPIError = onAPIError
         _viewModel = State(initialValue: ChatAttachmentPreviewViewModel(session: session, server: server, item: item))
+    }
+
+    init(local item: ChatAttachmentPreviewItem, onAPIError: @escaping (Error) -> Void = { _ in }) {
+        self.item = item
+        self.onAPIError = onAPIError
+        _viewModel = State(initialValue: ChatAttachmentPreviewViewModel(local: item))
     }
 
     var body: some View {
@@ -349,9 +364,9 @@ struct ChatAttachmentImageLightbox: View {
 @MainActor
 @Observable
 final class ChatAttachmentPreviewViewModel {
-    private let session: SessionSummary
+    private let session: SessionSummary?
     private let item: ChatAttachmentPreviewItem
-    private let apiClient: APIClient
+    private let apiClient: APIClient?
     private var didLoad = false
 
     private(set) var preview: FilePreviewContent?
@@ -365,19 +380,25 @@ final class ChatAttachmentPreviewViewModel {
         apiClient = APIClient(baseURL: server)
     }
 
+    init(local item: ChatAttachmentPreviewItem) {
+        session = nil
+        self.item = item
+        apiClient = nil
+    }
+
     func load(force: Bool = false) async {
         guard force || !didLoad else { return }
         didLoad = true
         preview = nil
 
-        guard let sessionID = session.sessionId else {
-            errorMessage = String(localized: "Session ID is missing.")
-            return
-        }
-
         let trimmedPath = item.path?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let path = trimmedPath, !path.isEmpty else {
             preview = localFallbackPreview
+            return
+        }
+
+        guard let sessionID = session?.sessionId, let apiClient else {
+            errorMessage = String(localized: "Session ID is missing.")
             return
         }
 
@@ -414,8 +435,26 @@ final class ChatAttachmentPreviewViewModel {
     }
 
     private var localFallbackPreview: FilePreviewContent {
-        if item.inferredIsImage, let data = item.localImageData {
+        if item.inferredIsImage, let data = item.localData {
             return .image(.init(data: data, originalByteCount: data.count))
+        }
+
+        if item.inferredIsAudio, let data = item.localData {
+            return .audio(data)
+        }
+
+        if !item.isKnownUnsupportedBinary,
+           let data = item.localData,
+           let text = String(data: data, encoding: .utf8) {
+            return .text(FileResponse(
+                content: text,
+                path: nil,
+                name: item.displayName,
+                language: nil,
+                size: data.count,
+                lines: text.split(separator: "\n", omittingEmptySubsequences: false).count,
+                error: nil
+            ))
         }
 
         return .unavailable(String(localized: "This attachment does not have a server file path."))
